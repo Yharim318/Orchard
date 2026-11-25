@@ -1,0 +1,114 @@
+# 6. Build and configuration files
+
+## Requirements
+
+- **GraalVM for JDK 21+** (provides `javac`, `jar`, `java` and `native-image`). Any JDK 21+ is enough if
+  you only build/run the JAR.
+- **Windows native builds** also need the Visual Studio C++ build tools ("Desktop development with C++").
+  `build.cmd` finds and activates them automatically.
+- To run: a Chromium-based browser with Widevine (Chrome, Edge, Brave, Vivaldi).
+
+GraalVM cannot cross-compile: build the Windows `.exe` on Windows, the Linux binary on Linux, and so on.
+
+---
+
+## `build.sh` (macOS / Linux)
+
+```bash
+./build.sh          # build/orchard.jar + build/orchard (native)
+./build.sh --jar    # JAR only (seconds instead of ~30 s)
+```
+
+Steps:
+
+1. Delete and recreate `build/classes`.
+2. `javac --release 21 -encoding UTF-8 -d build/classes <every .java under src/main/java>`.
+3. Copy `src/main/resources/.` into `build/classes/`, so resources sit at the classpath root (`web/…`,
+   `engine/…`, `META-INF/…`).
+4. `jar --create --file build/orchard.jar --main-class orchard.Main -C build/classes .`
+5. Unless `--jar`: `native-image -march=compatibility -jar build/orchard.jar -o build/orchard`.
+   `-march=compatibility` makes the binary run on older CPUs, not just the build machine's.
+6. Windows only (`build.cmd`): `editbin /subsystem:windows build\orchard.exe` marks the exe as a windowed
+   program, so Windows (and Windows Terminal, when it is the default terminal) opens no terminal for it. Its
+   output goes to `orchard.log` instead (see `ConsoleWindow`); Ctrl+Shift+T shows it. Run the JAR to see output in a
+   terminal.
+
+## `build.cmd` (Windows)
+
+Same steps as `build.sh`, plus automatic tool discovery so it works from any command prompt or by
+double-clicking:
+
+1. **GraalVM**: uses `JAVA_HOME` if set, otherwise the first folder matching `C:\java\graalvm-*`,
+   `%ProgramFiles%\Java\graalvm-*`, `%ProgramFiles%\GraalVM\*` or `%USERPROFILE%\.jdks\graalvm-*` that contains
+   `bin\native-image.cmd`, and puts its `bin` first on `PATH`.
+2. Compiles (via a `build\sources.txt` argument file), copies resources with `xcopy`, creates the JAR.
+3. **Visual Studio C++ tools**: if `cl.exe` isn't already on `PATH`, uses `vswhere.exe` to find the newest
+   Visual Studio with the C++ x64 tools and calls its `vcvars64.bat`.
+4. `native-image -march=compatibility -jar build\orchard.jar -o build\orchard` → `build\orchard.exe`.
+5. Pauses at the end only when launched by double-click (so the window doesn't vanish).
+
+Note: the file must keep **Windows (CRLF) line endings**. Some editors or WSL tools convert them; if `cmd`
+starts printing odd errors, convert the line endings back.
+
+### Working from WSL
+
+The project lives in WSL (`~/Stupid Dev Projects/Orchard`) but the Windows build runs from
+`C:\Users\glika\Juice`, because `cmd.exe` can't run scripts from `\\wsl.localhost\…` paths. After editing in
+WSL, copy the sources over and rebuild:
+
+```bash
+rm -rf /mnt/c/Users/glika/Juice/src && cp -r src README.md build.cmd /mnt/c/Users/glika/Juice/
+```
+
+Then run `build.cmd` in `C:\Users\glika\Juice` (it fails to replace `orchard.exe` while Orchard is running).
+
+---
+
+## `src/main/resources/META-INF/native-image/orchard/orchard/native-image.properties`
+
+`native-image` automatically reads `META-INF/native-image/<group>/<artifact>/native-image.properties` from
+JARs it compiles. Ours contains:
+
+```
+Args = --no-fallback \
+       --install-exit-handlers \
+       --enable-http \
+       --enable-https \
+       -H:ResourceConfigurationResources=${.}/resource-config.json
+```
+
+- `--no-fallback`: fail rather than produce a binary that secretly needs a JVM.
+- `--install-exit-handlers`: run Java shutdown hooks on Ctrl+C / console close, so Orchard closes the browser
+  cleanly (a killed browser can lose a fresh Apple Music sign-in).
+- `--enable-http/--enable-https`: include URL protocol handlers (used by `java.net.http`).
+- `-H:ResourceConfigurationResources=…`: points at the resource list below. (GraalVM prints a warning that
+  this option is "experimental"; it's harmless.)
+
+## `…/resource-config.json`
+
+```json
+{ "resources": { "includes": [ { "pattern": "^web/.*" }, { "pattern": "^engine/.*" } ] } }
+```
+
+Native images only contain resources that are explicitly listed. Everything under `web/` and `engine/` is
+embedded. **If you add a new resource folder, add a pattern here**, or the native binary won't find
+the files (the JAR would, which makes this easy to miss).
+
+No reflection configuration exists because the code uses no reflection. If you add a library that does
+(most JSON or HTTP libraries), run your app once on the JVM with GraalVM's tracing agent
+(`java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/orchard/orchard -jar build/orchard.jar`)
+to generate the needed config.
+
+---
+
+## Other root files
+
+| File | Purpose |
+|------|---------|
+| `README.md` | User-facing overview: what Orchard is, how it works (short), requirements, build, run, options, security notes, limitations. Keep it in sync when behaviour changes. |
+| `.gitignore` | Ignores `build/` and `*.log`. |
+| `docs/` | This documentation. |
+
+## Version number
+
+`Orchard.VERSION` in `Orchard.java`. Shown in the banner and `/api/info`.
