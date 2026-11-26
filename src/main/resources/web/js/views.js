@@ -1,6 +1,6 @@
 // Page views: home, search, album, playlist, artist, library, songs, queue, lyrics.
 import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast } from './util.js';
-import { S, am, sf, subscribe } from './store.js';
+import { S, am, sf, subscribe, queuePage } from './store.js';
 import {
   toTrack, toCard, cardHtml, shelf, grid, trackRows, registerList, getList, markPlaying, loading, errorBox,
   libraryList, playList, playQueue, addToLibrary, openMenu, collectionMenuItems, favoritesPlaylist, moveInQueue,
@@ -266,10 +266,10 @@ async function album(el, m) {
 // ------------------------------------------------------------------ playlist
 
 /** All of a library playlist's tracks (several pages; an empty playlist answers 404). */
-async function libraryPlaylistTracks(id, limitPages = 10) {
+async function libraryPlaylistTracks(id) {
   let out = [];
   let next = `/v1/me/library/playlists/${enc(id)}/tracks?limit=100`;
-  for (let page = 0; next && page < limitPages; page++) {
+  while (next) {
     let r;
     try { r = await am(next, { fresh: true }); } catch (e) { if (e.status === 404) break; throw e; }
     out = out.concat(r.data || []);
@@ -304,7 +304,7 @@ async function playlist(el, m, opts = {}) {
     } catch (e) { /* empty playlist returns 404 */ }
   }
   // A quiet refresh keeps at least as many songs as were showing, so the scroll position survives.
-  for (let page = 0; next && opts.minTracks && tracks.length < opts.minTracks && page < 20; page++) {
+  while (next && opts.minTracks && tracks.length < opts.minTracks) {
     try {
       const r = await am(withLimit(next));
       tracks = tracks.concat((r.data || []).map(toTrack));
@@ -762,30 +762,160 @@ export const fromItem = (it) => ({ ...it, playable: true, playId: it.id, type: '
 export function renderQueue(el, { compact = false } = {}) {
   let sig = '';
   let deferred = false;
+  // The state carries the queue around the current song; songs further down are read page by page as you
+  // scroll (any length). `more` holds them by queue index, valid while the queue's revision stays the same.
+  let more = new Map();
+  let moreRev = null;
+  let busy = false;
+  let pagingFailed = false;
+  let refetching = 0;
+  let refetchRev; // the revision a running refetch is for
+  let ctx = null; // what the last full draw rendered: { q, list, key, nextItems, end }
+  const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) loadMore(); });
+  const PAGE_SIZE = 200;
+
+  const sentinelHtml = (q, end) => (end < q.total
+    ? (pagingFailed ? `<p class="muted small q-more">+ ${q.total - end} more</p>` : '<div class="sentinel q-more"></div>')
+    : '');
+
+  /** Songs at queue indexes from..: the state's window first, then pages loaded earlier. */
+  function collect(q, from) {
+    const out = [];
+    for (let i = from; i < q.total; i++) {
+      const it = i - q.offset < q.items.length ? q.items[i - q.offset] : more.get(i);
+      if (!it) break;
+      out.push(fromItem(it));
+    }
+    return out;
+  }
+
+  async function pages(start, count) {
+    const items = [];
+    let rev = null;
+    while (items.length < count) {
+      const r = await queuePage(start + items.length, Math.min(PAGE_SIZE, count - items.length));
+      if (rev !== null && r.rev !== rev) throw new Error('queue changed');
+      rev = r.rev;
+      if (!r.items || !r.items.length) break;
+      items.push(...r.items);
+    }
+    return { rev, items };
+  }
+
+  // The queue was edited (here or elsewhere) while songs further down were showing: read them again, then
+  // redraw once, so the list doesn't shrink and jump while they reload.
+  async function refetch(q) {
+    if (refetchRev === q.rev) return; // already on it
+    refetchRev = q.rev;
+    const token = ++refetching;
+    const end = q.offset + q.items.length;
+    let last = -1;
+    for (const k of more.keys()) if (k > last) last = k;
+    const want = Math.max(0, last + 1 - end);
+    let fresh = new Map();
+    let rev = q.rev;
+    try {
+      const r = await pages(end, want);
+      rev = r.rev;
+      r.items.forEach((it, k) => fresh.set(end + k, it));
+    } catch (e) { fresh = new Map(); }
+    if (token !== refetching) return;
+    refetchRev = undefined;
+    more = fresh;
+    moreRev = rev;
+    sig = '';
+    draw();
+  }
+
+  async function loadMore() {
+    const c = ctx;
+    if (!c || busy || pagingFailed || c.end >= c.q.total) return;
+    busy = true;
+    try {
+      const r = await queuePage(c.end, PAGE_SIZE);
+      const now = S.state.queue;
+      // Only keep it if nothing changed meanwhile; otherwise the next state update redraws and asks again.
+      if (c === ctx && now && r.rev === now.rev && (moreRev === null || moreRev === r.rev) && r.start === c.end) {
+        moreRev = r.rev;
+        (r.items || []).forEach((it, k) => more.set(r.start + k, it));
+        const added = (r.items || []).map(fromItem);
+        if (added.length) {
+          const L = getList(c.key);
+          const start = c.nextItems.length;
+          c.nextItems.push(...added); // the registered list's own array, so clicks and drags see them
+          c.end += added.length;
+          c.list.insertAdjacentHTML('beforeend', trackRows(added, c.key, { album: !compact, header: false, artwork: true, queue: true, start }));
+          if (L && L.tracks !== c.nextItems) L.tracks.push(...added);
+          markPlaying(c.list);
+        }
+        const s = el.querySelector('.q-more');
+        if (s) { io.unobserve(s); s.remove(); }
+        c.list.insertAdjacentHTML('afterend', sentinelHtml(c.q, c.end));
+        const s2 = el.querySelector('.sentinel.q-more');
+        if (s2) io.observe(s2);
+      }
+    } catch (e) {
+      // An older speaker without paging (or a network problem): show the count instead.
+      pagingFailed = true;
+      const s = el.querySelector('.q-more');
+      if (s && ctx) { io.unobserve(s); s.outerHTML = sentinelHtml(ctx.q, ctx.end); }
+    } finally {
+      busy = false;
+    }
+  }
+
   const draw = () => {
     if (isRowDragging()) { deferred = true; return; }
     const q = S.state.queue;
-    const s = q ? `${q.position}|${q.offset}|${q.total}|${(q.items || []).map((i) => i && i.id).join(',')}` : 'none';
+    if (q && q.rev !== moreRev) {
+      if (more.size && q.rev != null) { refetch(q); return; } // keep what's shown until the new pages are in
+      more = new Map();
+      moreRev = q.rev;
+    }
+    const s = q ? `${q.position}|${q.offset}|${q.total}|${q.rev}|${(q.items || []).map((i) => i && i.id).join(',')}` : 'none';
     if (s === sig) { markPlaying(el); return; }
     sig = s;
+    io.disconnect();
+    ctx = null;
     if (!q || !q.items || !q.items.length || q.position < 0) {
       el.innerHTML = `${compact ? '' : '<h1 class="page-title">Queue</h1>'}<div class="empty"><h3>Your queue is empty</h3><p>Find something to play in Search or your Library.</p></div>`;
       return;
     }
     const rel = q.position - q.offset;
     const cur = q.items[rel] ? [fromItem(q.items[rel])] : [];
-    const nextItems = q.items.slice(rel + 1).filter(Boolean).map(fromItem);
+    const nextItems = collect(q, q.position + 1);
+    const end = q.position + 1 + nextItems.length;
     const k1 = registerList(cur, { queueOffset: q.position });
     const k2 = registerList(nextItems, { queueOffset: q.position + 1 });
     const opts = { album: !compact, header: false, artwork: true };
     el.innerHTML = `${compact ? '' : '<h1 class="page-title">Queue</h1>'}
       <h2 class="queue-h">Now playing</h2><div class="tracks">${trackRows(cur, k1, opts)}</div>
       ${nextItems.length ? `<h2 class="queue-h">Next up</h2><div class="tracks q-next">${trackRows(nextItems, k2, { ...opts, queue: true })}</div>` : ''}
-      ${q.total > q.offset + q.items.length ? `<p class="muted small">+ ${q.total - q.offset - q.items.length} more</p>` : ''}`;
+      ${nextItems.length ? sentinelHtml(q, end) : ''}`;
     const list = el.querySelector('.q-next');
     if (list) {
+      ctx = { q, list, key: k2, nextItems, end };
+      const sentinel = el.querySelector('.sentinel.q-more');
+      if (sentinel) io.observe(sentinel);
       enableRowDrag(list, {
-        onMove: (a, b) => moveInQueue(q.position + 1 + a, q.position + 1 + b, nextItems[a]),
+        onMove: (a, b) => {
+          const from = q.position + 1 + a;
+          const to = q.position + 1 + b;
+          const t = nextItems[a];
+          // Songs past the state's window aren't edited locally: move the row here until the speaker answers.
+          const local = from - q.offset < q.items.length && to - q.offset < q.items.length;
+          if (!local) {
+            const rows = [...list.querySelectorAll('.q-row')];
+            rows[b].insertAdjacentElement(b > a ? 'afterend' : 'beforebegin', rows[a]);
+            nextItems.splice(b, 0, ...nextItems.splice(a, 1));
+            [...list.querySelectorAll('.q-row')].forEach((r, i) => {
+              r.dataset.i = i;
+              const n = r.querySelector('.num');
+              if (n) n.textContent = i + 1;
+            });
+          }
+          moveInQueue(from, to, t);
+        },
         // Catch up on any update that arrived mid-drag.
         onEnd: () => { if (deferred) { deferred = false; draw(); } },
       });
@@ -793,7 +923,8 @@ export function renderQueue(el, { compact = false } = {}) {
     markPlaying(el);
   };
   draw();
-  return subscribe((kind) => { if (kind === 'state') draw(); });
+  const unsub = subscribe((kind) => { if (kind === 'state') draw(); });
+  return () => { unsub(); io.disconnect(); refetching++; refetchRev = undefined; };
 }
 
 function queue(el) {

@@ -29,6 +29,7 @@ Served by `WebServer` on port 8787. Phones call these directly; the app window c
 | `GET /api/speakers` | | `[{id, name, url, self}]` | `url` is null for this computer. |
 | `GET /api/events` | `?deviceId=&name=&kind=` | SSE stream | See [live events](#live-events). Registers the caller as a device. |
 | `POST /api/cmd` | a [player command](#player-commands) | player state after the command | |
+| `GET /api/queue?start=&count=` | | `{rev, position, total, start, items[]}`: songs `start…start+count` (at most 500 per request) of the queue, for paging past the window the state carries | |
 | `GET /api/am` | `?path=/v1/...` (URL-encoded) | Apple's JSON body, Apple's status | Catalog paths cached 10 min. |
 | `POST /api/am` | `{method: "POST"|"PUT"|"DELETE", path, body}` | Apple's JSON body, Apple's status | Library edits, ratings, playlists. |
 | `POST /api/signin` | | `{ok:true}` | Shows Apple's page for sign-in (on the computer). |
@@ -122,7 +123,7 @@ Built by `snapshot()` in `engine.js`, merged by `Engine.mergeState` (which adds 
 | `shuffle` | 0/1 | |
 | `repeat` | 0/1/2 | off / one / all |
 | `item` | object or null | Now playing: `{id, catalogId, kind, title, artist, album, artwork (URL template), bgColor, duration, albumId, artistId, explicit, hasLyrics}` |
-| `queue` | object | `{position, offset, total, items[]}`: `items` is a window starting at absolute index `offset`; only present in "full" reports (the UI keeps the last one). |
+| `queue` | object | `{position, offset, total, rev, items[]}`: `items` is a window (15 before the current song, 100 after) starting at absolute index `offset`; the rest is read with `GET /api/queue`. `rev` changes whenever the queue's contents change (not when it just moves on), so pages read earlier stay valid until it does; only present in "full" reports (the UI keeps the last one). |
 | `outputs` | array | This computer's audio outputs `{id, label, detail?}`; the first is `{id:''}`, the system default (`detail` = which device that is). Only the default when the browser can't name devices. |
 | `output` | string | `id` of the output in use. |
 | `outputWanted` | string or null | Name of the picked output, even while it is disconnected (`output` is then `''`). |
@@ -159,7 +160,7 @@ All through `/api/am` → `engine.js api()` → `https://amp-api.music.apple.com
 | Playlist | `/v1/catalog/{sf}/playlists/{id}?include=tracks`, `/v1/me/library/playlists/{id}?include=tracks`, `…/tracks?limit=100` | `views.playlist` |
 | Artist | `/v1/catalog/{sf}/artists/{id}?views=top-songs,latest-release,full-albums,singles,appears-on-albums,featured-playlists,similar-artists&extend=artistBio,editorialArtwork` | `views.artist` |
 | Library artist | `/v1/me/library/artists/{id}?include=catalog`, `…/albums` | `views.libraryArtist` |
-| Library lists | `/v1/me/library/playlists|albums|artists?limit=100`, `/v1/me/library/songs?limit=100` | `components.libraryList`, `views.songs` |
+| Library lists | `/v1/me/library/playlists|albums|artists?limit=100` (artists add `include=catalog` for their pictures; with `meta.total` known, the other pages load in parallel via `offset`), `/v1/me/library/songs?limit=100` | `components.libraryList`, `views.songs` |
 | Add to library | `POST /v1/me/library?ids[songs|albums|playlists]=id` | `components.addToLibrary`, `setLoved` |
 | Playlists | `POST /v1/me/library/playlists`, `POST /v1/me/library/playlists/{id}/tracks` | `createPlaylist`, `addToPlaylist` |
 | Favorites | `GET /v1/me/ratings/songs?ids=…`, `PUT|DELETE /v1/me/ratings/songs/{id}` | `fetchLoved`, `setLoved` |

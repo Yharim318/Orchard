@@ -1,20 +1,26 @@
 @echo off
 rem Builds Orchard on Windows: build\orchard.jar and the native build\orchard.exe.
-rem Finds GraalVM (JAVA_HOME, PATH, or C:\java\graalvm-*) and the Visual Studio C++ tools automatically,
-rem so it can be run from any command prompt or by double-clicking.
+rem Finds GraalVM (ORCHARD_GRAALVM_HOME from local.env, JAVA_HOME, PATH, or the usual install folders) and
+rem the Visual Studio C++ tools automatically, so it can be run from any command prompt or by double-clicking.
 rem   build.cmd          JAR + native executable
 rem   build.cmd --jar    JAR only (run with: java -jar build\orchard.jar)
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+rem ---- machine-specific settings (local.env: NAME=value lines; real environment variables win) ----
+if exist local.env (
+  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("local.env") do if not defined %%A set "%%A=%%B"
+)
+
 rem ---- locate GraalVM -------------------------------------------------------
+if defined ORCHARD_GRAALVM_HOME set "JAVA_HOME=%ORCHARD_GRAALVM_HOME%"
 if not defined JAVA_HOME (
-  for /d %%G in ("C:\java\graalvm-*" "%ProgramFiles%\Java\graalvm-*" "%ProgramFiles%\GraalVM\*" "%USERPROFILE%\.jdks\graalvm-*") do (
+  for /d %%G in ("%ProgramFiles%\Java\graalvm-*" "%ProgramFiles%\GraalVM\*" "%USERPROFILE%\.jdks\graalvm-*") do (
     if exist "%%~G\bin\native-image.cmd" set "JAVA_HOME=%%~G"
   )
 )
 if defined JAVA_HOME set "PATH=%JAVA_HOME%\bin;%PATH%"
-where javac >nul 2>nul || (echo Could not find GraalVM. Set JAVA_HOME to your GraalVM folder and try again. & goto :fail)
+where javac >nul 2>nul || (echo Could not find GraalVM. Set ORCHARD_GRAALVM_HOME in local.env ^(see local.env.example^) or JAVA_HOME to your GraalVM folder and try again. & goto :fail)
 echo Using Java from %JAVA_HOME%
 
 rem ---- compile --------------------------------------------------------------

@@ -128,7 +128,11 @@
   }
 
   let mk = null;
+  // State updates carry a window of the queue around the current song; the rest is read in pages through
+  // queueItems(). queueRev changes whenever the queue's contents change (not when it just moves on), so a
+  // page read earlier stays valid until then.
   const QUEUE_BEFORE = 15, QUEUE_AFTER = 100;
+  let queueRev = 0;
 
   const relId = (it, rel) => {
     try { return it.relationships[rel].data[0].id; } catch (e) { return null; }
@@ -186,7 +190,7 @@
       const pos = typeof q.position === 'number' ? q.position : -1;
       const start = Math.max(0, pos - QUEUE_BEFORE);
       const end = Math.min(items.length, Math.max(pos, 0) + QUEUE_AFTER);
-      s.queue = { position: pos, offset: start, total: items.length, items: items.slice(start, end).map(itemInfo) };
+      s.queue = { position: pos, offset: start, total: items.length, rev: queueRev, items: items.slice(start, end).map(itemInfo) };
     }
     return s;
   }
@@ -210,6 +214,7 @@
     const on = (name, full) => {
       try { mk.addEventListener(name, () => schedule(full)); } catch (e) { log('cannot listen to', name); }
     };
+    try { mk.addEventListener('queueItemsDidChange', () => { queueRev++; }); } catch (e) { /* no paging guard */ }
     ['nowPlayingItemDidChange', 'queueItemsDidChange', 'queuePositionDidChange', 'authorizationStatusDidChange',
       'storefrontIdentifierDidChange'].forEach((n) => on(n, true));
     ['playbackStateDidChange', 'playbackVolumeDidChange', 'shuffleModeDidChange', 'repeatModeDidChange',
@@ -470,10 +475,26 @@
     });
   }
 
+  /** One page of the queue: items[start .. start+count), with the revision they belong to. */
+  async function queueItems(start, count) {
+    const m = need();
+    const items = (m.queue && m.queue.items) || [];
+    const from = clamp(start, 0, items.length);
+    const n = clamp(count, 0, 500);
+    return JSON.stringify({
+      rev: queueRev,
+      position: m.queue ? m.queue.position : -1,
+      total: items.length,
+      start: from,
+      items: items.slice(from, from + n).map(itemInfo),
+    });
+  }
+
   window.__orchard = {
     cmd,
     api,
     exportQueue,
+    queueItems,
     state: async () => JSON.stringify(snapshot(true)),
     authorize: async () => { await need().authorize(); schedule(true); return 'true'; },
     unauthorize: async () => { await need().unauthorize(); schedule(true); return 'true'; },

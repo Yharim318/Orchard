@@ -1,2 +1,5 @@
 build/
 *.log
+
+# Machine-specific paths (template: local.env.example)
+local.env

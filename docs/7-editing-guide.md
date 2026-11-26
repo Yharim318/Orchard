@@ -11,11 +11,12 @@ iteration build only the JAR and run it on the JVM:
 ./build.sh --jar && java -jar build/orchard.jar --debug          # macOS/Linux/WSL
 ```
 ```bat
-build.cmd --jar && C:\java\graalvm-jdk-21.0.12+7.1\bin\java -jar build\orchard.jar --debug
+build.cmd --jar && java -jar build\orchard.jar --debug
 ```
+(On Windows, use `<GraalVM folder>\bin\java` if `java` isn't on your `PATH`.)
 
 Editing in WSL but building on Windows? `./sync-windows.sh` copies `src/`, `docs/` and the top-level files to
-`C:\Users\glika\Juice` (or the folder given as an argument / `ORCHARD_WINDOWS_DIR`), mirroring deletions. It never
+the Windows folder set as `ORCHARD_WINDOWS_DIR` in `local.env` (or given as an argument), mirroring deletions. It never
 touches the Windows `build\` folder.
 
 Build the native executable when you're done. Close any running Orchard first (port 8787 and the `.exe` file

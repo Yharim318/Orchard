@@ -12,7 +12,7 @@ import { comboOf, actionFor, firstKey } from './keys.js';
 import { initShelves } from './shelves.js';
 import { initVerticalBars } from './scrollbars.js';
 import { isRowDragging } from './queuedrag.js';
-import { loadCustomArtwork, initMosaics } from './artwork.js';
+import { loadCustomArtwork, loadMosaicCache, initMosaics } from './artwork.js';
 import { openPlaylistEditor, findLibraryPlaylist, playlistMenuItems } from './playlists.js';
 
 // ------------------------------------------------------------------ shell
@@ -352,7 +352,8 @@ async function boot() {
     }
     if (kind === 'state') markPlaying();
   });
-  await loadCustomArtwork();
+  // Saved mosaics usually load in a few ms; don't hold up startup if the browser's storage is slow.
+  await Promise.all([loadCustomArtwork(), Promise.race([loadMosaicCache(), new Promise((r) => setTimeout(r, 250))])]);
   try {
     await init();
   } catch (e) {

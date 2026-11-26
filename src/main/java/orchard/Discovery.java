@@ -39,7 +39,6 @@ final class Discovery {
     /** A peer's current address is kept over a worse-ranked one while it was heard from this recently. */
     private static final long PREFER_MS = 7_000;
     private static final long TARGET_REFRESH_MS = 20_000;
-    private static final int MAX_TAILSCALE_TARGETS = 100;
 
     record Peer(String id, String name, String url, long lastSeen) {}
 
@@ -252,7 +251,6 @@ final class Discovery {
                         break;
                     }
                 }
-                if (out.size() >= MAX_TAILSCALE_TARGETS) break;
             }
         } catch (Exception e) {
             Log.debug("Cannot read tailscale status: " + e.getMessage());

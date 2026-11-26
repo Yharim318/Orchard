@@ -136,6 +136,9 @@ function speakerRequest(path, opts = {}) {
   return http(S.speakerBase + path, opts);
 }
 
+/** Songs [start, start+count) of the speaker's queue: { rev, position, total, start, items }. */
+export const queuePage = (start, count) => speakerRequest(`/api/queue?start=${start}&count=${count}`);
+
 export const post = (path, body) => speakerRequest(path, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },

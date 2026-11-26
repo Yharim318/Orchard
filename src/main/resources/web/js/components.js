@@ -132,15 +132,25 @@ function editLocalQueue(fn) {
   return () => patchState({ queue: q });
 }
 
+/** Whether queue index `i` is inside the window of the queue that the state carries. */
+function inWindow(i) {
+  const q = S.state.queue;
+  return !!q && !!q.items && i - q.offset >= 0 && i - q.offset < q.items.length;
+}
+
+// Songs further down (loaded page by page in the queue view) aren't in the state: those edits show once the
+// speaker answers.
 export function removeFromQueue(index, t) {
   if (!isUpcoming(index)) return Promise.resolve();
-  const undo = editLocalQueue((items, rel) => { items.splice(rel(index), 1); return -1; });
+  const undo = inWindow(index) ? editLocalQueue((items, rel) => { items.splice(rel(index), 1); return -1; }) : () => {};
   return cmd({ type: 'remove', index, id: t && t.playId }).catch(() => undo());
 }
 
 export function moveInQueue(from, to, t) {
   if (from === to || !isUpcoming(from) || !isUpcoming(to)) return Promise.resolve();
-  const undo = editLocalQueue((items, rel) => { items.splice(rel(to), 0, ...items.splice(rel(from), 1)); return 0; });
+  const undo = inWindow(from) && inWindow(to)
+    ? editLocalQueue((items, rel) => { items.splice(rel(to), 0, ...items.splice(rel(from), 1)); return 0; })
+    : () => {};
   return cmd({ type: 'move', from, to, id: t && t.playId }).catch(() => undo());
 }
 
@@ -277,16 +287,60 @@ export function playlistChanged(detail) {
   document.dispatchEvent(new CustomEvent('playlist-changed', { detail }));
 }
 
+// Library artists carry no artwork of their own; music.apple.com asks for the matching catalog artist
+// (include=catalog) and shows its picture. Orchard does the same.
+const LIB_PARAMS = { artists: '&include=catalog' };
+const PAGE = 100;
+
+/** Copies a library artist's catalog artwork onto it (what music.apple.com shows). */
+function withCatalogArtwork(r) {
+  const a = r && r.attributes;
+  if (!a || a.artwork) return r;
+  const cat = r.relationships && r.relationships.catalog && r.relationships.catalog.data && r.relationships.catalog.data[0];
+  const art = cat && cat.attributes && cat.attributes.artwork;
+  if (art) a.artwork = art;
+  return r;
+}
+
+/** Everything of one kind in the library. Once Apple says how many there are, the remaining pages load in parallel. */
+async function fetchWholeLibrary(kind) {
+  const base = `${LIB_PATHS[kind]}?limit=${PAGE}${LIB_PARAMS[kind] || ''}`;
+  const first = await am(base);
+  const pages = [first.data || []];
+  const total = first.meta && Number(first.meta.total);
+  if (first.next && total > PAGE) {
+    // Known size: fetch the other pages a few at a time.
+    const offsets = [];
+    for (let off = PAGE; off < total; off += PAGE) offsets.push(off);
+    let i = 0;
+    const worker = async () => {
+      while (i < offsets.length) {
+        const k = i++;
+        pages[k + 1] = (await am(`${base}&offset=${offsets[k]}`)).data || [];
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+  } else {
+    // Unknown size: follow the "next" links.
+    let next = first.next;
+    while (next) {
+      const sep = next.includes('?') ? '&' : '?';
+      const url = next + (next.includes('limit=') ? '' : `${sep}limit=${PAGE}`) + (LIB_PARAMS[kind] && !next.includes('include=') ? LIB_PARAMS[kind] : '');
+      const r = await am(url);
+      pages.push(r.data || []);
+      next = r.next;
+    }
+  }
+  // Pages may overlap if the library changed while loading; keep each item once.
+  const seen = new Set();
+  return pages.flat().filter((x) => x && !seen.has(x.id) && seen.add(x.id));
+}
+
 export function libraryList(kind, fresh = false) {
   if (libCache[kind] && !fresh) return libCache[kind];
   const p = (async () => {
-    let out = [];
-    let next = `${LIB_PATHS[kind]}?limit=100`;
-    for (let page = 0; next && page < 10; page++) {
-      const r = await am(next);
-      out = out.concat(r.data || []);
-      next = r.next ? (r.next.includes('limit=') ? r.next : r.next + (r.next.includes('?') ? '&' : '?') + 'limit=100') : null;
-    }
+    let out = await fetchWholeLibrary(kind);
+    if (kind === 'artists') out = out.map(withCatalogArtwork);
     if (kind === 'playlists') out = out.filter((x) => !recentlyDeleted(x.id)).map(withRecentEdits);
     return out;
   })();

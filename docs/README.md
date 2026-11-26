@@ -18,6 +18,7 @@ confidently. Read them in order the first time; afterwards use them as a referen
 ```
 Orchard/
 ├── build.sh / build.cmd           build the JAR and the native executable (macOS/Linux / Windows)
+├── local.env.example               template for local.env, the git-ignored machine-specific paths
 ├── README.md                       user-facing readme
 ├── docs/                           ← you are here
 └── src/main/

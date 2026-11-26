@@ -38,8 +38,8 @@ Steps:
 Same steps as `build.sh`, plus automatic tool discovery so it works from any command prompt or by
 double-clicking:
 
-1. **GraalVM**: uses `JAVA_HOME` if set, otherwise the first folder matching `C:\java\graalvm-*`,
-   `%ProgramFiles%\Java\graalvm-*`, `%ProgramFiles%\GraalVM\*` or `%USERPROFILE%\.jdks\graalvm-*` that contains
+1. **GraalVM**: uses `ORCHARD_GRAALVM_HOME` from `local.env` (see below) if set, then `JAVA_HOME`, otherwise
+   the first folder matching `%ProgramFiles%\Java\graalvm-*`, `%ProgramFiles%\GraalVM\*` or `%USERPROFILE%\.jdks\graalvm-*` that contains
    `bin\native-image.cmd`, and puts its `bin` first on `PATH`.
 2. Compiles (via a `build\sources.txt` argument file), copies resources with `xcopy`, creates the JAR.
 3. **Visual Studio C++ tools**: if `cl.exe` isn't already on `PATH`, uses `vswhere.exe` to find the newest
@@ -52,15 +52,31 @@ starts printing odd errors, convert the line endings back.
 
 ### Working from WSL
 
-The project lives in WSL (`~/Stupid Dev Projects/Orchard`) but the Windows build runs from
-`C:\Users\glika\Juice`, because `cmd.exe` can't run scripts from `\\wsl.localhost\…` paths. After editing in
-WSL, copy the sources over and rebuild:
+If the project lives in WSL, the Windows build has to run from a copy on the Windows drive, because `cmd.exe`
+can't run scripts from `\\wsl.localhost\…` paths. Set `ORCHARD_WINDOWS_DIR` in `local.env` to that copy's WSL
+path (for example `/mnt/c/Users/<you>/Orchard`), then sync and build in one go from WSL:
 
 ```bash
-rm -rf /mnt/c/Users/glika/Juice/src && cp -r src README.md build.cmd /mnt/c/Users/glika/Juice/
+./sync-windows.sh && (cd /mnt/c/Users/<you>/Orchard && /mnt/c/Windows/System32/cmd.exe /c build.cmd)
 ```
 
-Then run `build.cmd` in `C:\Users\glika\Juice` (it fails to replace `orchard.exe` while Orchard is running).
+Or run `build.cmd` in that Windows folder yourself after `./sync-windows.sh`. Quit Orchard first: the build
+can't replace `orchard.exe` while it is running.
+
+### `local.env` (machine-specific paths)
+
+Paths that differ per machine live in `local.env` at the project root, which is in `.gitignore`. Copy
+`local.env.example` to `local.env` and fill in what you need; every setting is optional. The format is
+`NAME=value` per line, without quotes; lines starting with `#` are comments. A real environment variable of
+the same name takes precedence over the file.
+
+| Setting | Read by | Meaning |
+|---|---|---|
+| `ORCHARD_WINDOWS_DIR` | `sync-windows.sh` | WSL path of the Windows copy to sync to (e.g. `/mnt/c/Users/<you>/Orchard`). |
+| `ORCHARD_GRAALVM_HOME` | `build.cmd` | Windows path of the GraalVM folder to build with. |
+
+`sync-windows.sh` copies `local.env` along with the other top-level files, so the Windows copy's `build.cmd`
+sees the same settings.
 
 ---
 

@@ -134,11 +134,21 @@ The single source of truth for the UI and the only module that talks to the serv
 | Data mapping | `toTrack(resource)`: Apple song/library-song/queue item → track object (`id, playId, catalogId, title, artist, album, artwork, duration, explicit, albumId, artistId, playable…`). `qid(track)`: the id to give MusicKit. `toCard(resource)`: album/playlist/artist/station/song → card object (`title, sub, artwork, href, play, round`). |
 | Track lists | `registerList(tracks, ctx)` → key; `getList(key)`. `ctx.collection` (e.g. `{album:id}`) makes playback queue the whole album/playlist; `ctx.queueOffset` makes rows jump within the current queue. `playList(key, index, {shuffle})`, `playQueue(desc, shuffle)`. `trackRows(tracks, key, opts)` renders rows (`album`, `artwork`, `start`, `header`, `discs` options). `markPlaying(root)` highlights the current track and calls `hydrateLoves`. |
 | Cards | `cardHtml(card)`, `shelf(title, resources)`, `grid(resources)`, `loading()`, `errorBox(err, what)`. |
-| Library | `libraryList(kind)` (playlists/albums/artists, up to 10 pages of 100, cached), `invalidateLibrary(kind)` (fires a `library-changed` DOM event), `addToLibrary`, `addToPlaylist`, `createPlaylist`. |
+| Library | `libraryList(kind)` (playlists/albums/artists, the whole library with no limit: first page, then the rest four at a time once the total is known; artists get their catalog artist's artwork; cached), `invalidateLibrary(kind)` (fires a `library-changed` DOM event), `addToLibrary`, `addToPlaylist`, `createPlaylist`. |
 | Favorites | `hydrateLoves(root)`, `isLoved(id)`, `lovedCached(id)`, `setLoved(id, on)`, `toggleLoved(id)`, `favoritesPlaylist()`. Ratings are fetched 50 at a time and cached; changes fire a `loved-changed` DOM event. |
 | Menus | `openMenu(anchor, items, title)`, `closeMenu()`. Items are `{label, icon, run}`, `{sep:true}` or `{label, icon, submenu: async () => items}`. Shown as a popup on desktop and a bottom sheet on phones. `trackMenuItems(track)`, `collectionMenuItems(card)` build the standard menus. |
 
 ---
+
+## `web/js/artwork.js`: playlist pictures and image loading
+
+| Item | Purpose |
+|------|---------|
+| `playlistArtwork(p)`, `mosaicFor(p)` | A playlist's picture: Orchard's custom one, Apple's, or a cached 2×2 mosaic of its first songs' covers; `mosaicFor` names playlists still needing one (`<img data-mosaic="p.…">`). |
+| `loadMosaicCache()` | Reads saved mosaics from IndexedDB (`orchard-artwork` / `mosaics`, no size limit; older ones in localStorage `orchard.mosaics` are moved there). Startup waits at most 250 ms for it, and building waits at most 1.5 s, so slow storage never blocks anything. |
+| `initMosaics()` | Watches the page for `img[data-mosaic]`. Pictures on or near the screen (IntersectionObserver) are built first, the rest of the library after, six at a time. A failed build is retried with growing waits (2 s → 2 min, then every 2 min) and never counts as "no picture". |
+| Image retry | A capture-phase `error` listener: a thumbnail that fails shows the placeholder and keeps retrying in the background (1 s → 1 min, then every minute) until it loads or leaves the page. |
+| `refreshMosaic(id)`, `dropMosaic(id)` | Rebuild after a playlist's songs change; forget a deleted playlist. |
 
 ## `web/js/views.js`: pages
 
@@ -155,7 +165,7 @@ the bottom maps hash patterns to pages:
 | `#/library/<kind>` | `library` | `libraryList`. A page of its own (`.lib-page`, sharing no classes with the sidebar list): tabs, a search filter, sort (recently added / alphabetical / creator, `localStorage['orchard.libSort']`), grid or list view (`orchard.libView`), with Favorite Songs and Songs pinned first on Playlists |
 | `#/favorites` | `favorites` | Apple's "Favorite Songs" playlist |
 | `#/songs` | `songs` | `/v1/me/library/songs`, infinite scroll |
-| `#/queue` | `queue` → `renderQueue` | `S.state.queue` (live) |
+| `#/queue` | `queue` → `renderQueue` | `S.state.queue` (live) plus `store.queuePage` pages of 200 loaded as you scroll (any length). Pages are kept while `rev` is unchanged; after an edit they're re-read, then redrawn once. |
 
 Helpers: `setHero(color)`, `heroHtml`, `actionsHtml` + `bindActions` (the big play / shuffle / add / more
 buttons, `data-a`), `infinite(el, next, onPage)` (loads further pages when a sentinel scrolls into view),

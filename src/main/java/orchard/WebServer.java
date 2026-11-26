@@ -116,6 +116,8 @@ final class WebServer {
             case "GET /api/speakers" -> sendJson(ex, 200, app.speakers());
             case "GET /api/events" -> events(ex, q);
             case "POST /api/cmd" -> sendJson(ex, 200, app.engine().command(body(ex)));
+            case "GET /api/queue" -> sendJson(ex, 200, app.engine().queueItems(
+                    intQuery(q, "start", 0), intQuery(q, "count", 200)));
             case "GET /api/am" -> appleGet(ex, q.get("path"));
             case "POST /api/am" -> appleWrite(ex, body(ex));
             case "GET /api/artwork" -> sendJson(ex, 200, Json.obj("items", artwork.list()));
@@ -213,6 +215,15 @@ final class WebServer {
             sendJson(ex, 200, version == null ? Json.obj("ok", true) : Json.obj("ok", true, "version", version));
         } else {
             throw new HttpError(400, "Unknown artwork operation");
+        }
+    }
+
+    private static int intQuery(Map<String, String> q, String key, int def) {
+        try {
+            String v = q.get(key);
+            return v == null ? def : Math.max(0, Integer.parseInt(v.trim()));
+        } catch (NumberFormatException e) {
+            throw new HttpError(400, "Invalid " + key);
         }
     }
 

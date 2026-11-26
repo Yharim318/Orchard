@@ -153,6 +153,14 @@ final class Engine {
         return r;
     }
 
+    /** A page of the queue ({@code rev, position, total, start, items}); the state only carries a window of it. */
+    Map<String, Object> queueItems(int start, int count) {
+        requireReady();
+        Map<String, Object> r = Json.map(invoke("queueItems", start, count));
+        if (r == null) throw new EngineException(500, "Could not read the queue");
+        return r;
+    }
+
     /** Current queue as plain catalog ids plus position, used to hand playback to another Orchard speaker. */
     Map<String, Object> exportQueue() {
         requireReady();
