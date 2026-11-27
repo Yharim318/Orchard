@@ -204,6 +204,56 @@ final class Orchard {
         return p != null && access.isLinked(p.id()) ? p : null;
     }
 
+    // ------------------------------------------------------------------ change signals
+
+    private final java.util.Set<String> seenChanges = java.util.Collections.newSetFromMap(
+            new java.util.LinkedHashMap<String, Boolean>() {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> e) {
+                    return size() > 1000;
+                }
+            });
+    private final java.net.http.HttpClient peerHttp = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(3)).build();
+
+    /**
+     * Something changed that every open Orchard should show right away, e.g. a song favorited or a playlist edited
+     * ({@code kind: "library"}), or a playlist picture set on this computer ({@code kind: "artwork"}). Every client
+     * of this computer gets a {@code change} event. A library change made here is also passed once to every linked
+     * computer (same Apple Music account), which tells its own clients; those don't pass it on again. Each change
+     * has an id, so one heard twice is announced once.
+     */
+    void announceChange(Map<String, Object> change, boolean fromPeer) {
+        String changeId = Json.str(change, "id");
+        if (changeId == null) return;
+        synchronized (seenChanges) {
+            if (!seenChanges.add(changeId)) return;
+        }
+        if (hub != null) hub.broadcast("change", change);
+        if (fromPeer || !"library".equals(Json.str(change, "kind"))) return;
+        String body = Json.write(change);
+        for (Discovery.Peer p : linkedPeers()) {
+            Thread.startVirtualThread(() -> {
+                try {
+                    java.net.http.HttpRequest req = authorize(java.net.http.HttpRequest.newBuilder(
+                            java.net.URI.create(p.url().replaceAll("/+$", "") + "/api/peer/change")))
+                            .timeout(java.time.Duration.ofSeconds(5))
+                            .header("Content-Type", "application/json")
+                            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build();
+                    peerHttp.send(req, java.net.http.HttpResponse.BodyHandlers.discarding());
+                } catch (Exception e) {
+                    Log.debug("Could not tell " + p.name() + " about a change: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    /** A new library change made through this computer (see {@link #announceChange}). */
+    void libraryChanged(String method, String path, String by) {
+        announceChange(Json.obj("id", java.util.UUID.randomUUID().toString(), "kind", "library", "method", method,
+                "path", path, "by", by, "from", id, "at", System.currentTimeMillis()), false);
+    }
+
     /** Adds this computer's key to a request to another Orchard computer. */
     java.net.http.HttpRequest.Builder authorize(java.net.http.HttpRequest.Builder b) {
         String device = "pc:" + id;

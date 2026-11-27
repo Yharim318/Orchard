@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
@@ -49,6 +50,11 @@ final class ArtCache {
     private final Map<String, CompletableFuture<Hit>> loading = new ConcurrentHashMap<>();
     private final AtomicLong total = new AtomicLong(); // bytes on disk (counted at startup, then kept up to date)
     private final AtomicBoolean trimming = new AtomicBoolean();
+    /** Pictures to download ahead of time (the Orchard window's start-up warm-up), and which are waiting. */
+    private final LinkedBlockingQueue<String> warmQueue = new LinkedBlockingQueue<>();
+    private final java.util.Set<String> warmWaiting = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean warmStarted = new AtomicBoolean();
+    private static final int WARM_WORKERS = 3;
 
     ArtCache(Path dataDir) {
         dir = dataDir.resolve("cache").resolve("artwork");
@@ -79,10 +85,15 @@ final class ArtCache {
         }
     }
 
+    private Path fileFor(String url) {
+        String key = sha256(url);
+        return dir.resolve(key.substring(0, 2)).resolve(key);
+    }
+
     Hit get(String url) {
         if (!allowed(url)) throw new WebServer.HttpError(400, "Not an Apple artwork address");
-        String key = sha256(url);
-        Path file = dir.resolve(key.substring(0, 2)).resolve(key);
+        Path file = fileFor(url);
+        String key = file.getFileName().toString();
         Hit hit = read(file);
         if (hit != null) return hit;
         // One download per picture, however many ask for it at once.
@@ -141,6 +152,54 @@ final class ArtCache {
             Log.debug("Could not keep a picture in the artwork cache: " + e.getMessage()); // still show it
         }
         return new Hit(bytes, type);
+    }
+
+    /**
+     * Queues pictures to download in the background (those not cached yet). Warming stops adding pictures once the
+     * cache is 85% full, so it never pushes out pictures that were actually looked at (trimming starts at 100%).
+     */
+    Map<String, Object> warm(List<String> urls) {
+        boolean full = warmFull();
+        int queued = 0;
+        if (!full && urls != null) {
+            for (String url : urls) {
+                if (!allowed(url) || Files.exists(fileFor(url)) || !warmWaiting.add(url)) continue;
+                warmQueue.add(url);
+                queued++;
+            }
+        }
+        if (queued > 0 && warmStarted.compareAndSet(false, true)) {
+            for (int i = 0; i < WARM_WORKERS; i++) Thread.startVirtualThread(this::warmWorker);
+        }
+        return Json.obj("queued", queued, "pending", warmWaiting.size(), "full", full,
+                "usedMB", total.get() >> 20, "limitMB", limit >> 20);
+    }
+
+    private boolean warmFull() {
+        return total.get() > limit / 100 * 85;
+    }
+
+    private void warmWorker() {
+        while (true) {
+            String url;
+            try {
+                url = warmQueue.take();
+            } catch (InterruptedException e) {
+                return;
+            }
+            try {
+                if (warmFull()) { // stop warming; pictures someone actually opens still load
+                    warmQueue.clear();
+                    warmWaiting.clear();
+                    continue;
+                }
+                if (!Files.exists(fileFor(url))) get(url);
+            } catch (RuntimeException e) {
+                Log.debug("Warm-up: could not load " + url + ": " + e.getMessage());
+            } finally {
+                warmWaiting.remove(url);
+            }
+        }
     }
 
     /** Over the limit: remove the least recently viewed pictures until 90% of it is used. */

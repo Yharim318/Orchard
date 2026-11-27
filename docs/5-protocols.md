@@ -31,12 +31,14 @@ Served by `WebServer` on port 8787. Phones call these directly; the app window c
 | `POST /api/cmd` | a [player command](#player-commands) | player state after the command | |
 | `GET /api/queue?start=&count=` | | `{rev, position, total, start, items[]}`: songs `start…start+count` (at most 500 per request) of the queue, for paging past the window the state carries | |
 | `GET /api/am` | `?path=/v1/...` (URL-encoded) | Apple's JSON body, Apple's status | Catalog paths cached 10 min. |
+| `POST /api/img/warm` | `{urls: [...]}` | `{queued, pending, full, usedMB, limitMB}` | Orchard window only. Queues Apple pictures to download in the background (3 at a time); takes no more once the cache is 85% full. `{urls: []}` just reports progress. |
 | `GET /api/img` | `?u=<https://….mzstatic.com/… image URL>` | the image (`immutable`) | Orchard window only (127.0.0.1; others get 403). Apple artwork through the disk cache (`ArtCache`). Other hosts → 400. |
 | `POST /api/am` | `{method: "POST"|"PUT"|"DELETE", path, body}` | Apple's JSON body, Apple's status | Library edits, ratings, playlists. |
 | `POST /api/signin` | | `{ok:true}` | Shows Apple's page for sign-in (on the computer). |
 | `POST /api/signout` | | `{ok:true}` | MusicKit `unauthorize`; clears the catalog cache. |
 | `POST /api/engine-window` | | `{ok:true}` | Toggles Apple's page (same as Ctrl+Shift+A). |
 | `POST /api/transfer` | `{to: "http://ip:port"}` | `{ok:true, speaker}` | Hand playback to a linked computer and pause here. |
+| `POST /api/peer/change` | a `change` event (library kind) | `{ok:true}` | Linked computers only (`pc:` key, `Access.isLinked`). A library change made through that computer; rebuilt from checked fields and broadcast here as `change`, not passed on further. |
 | `GET /api/update`, `POST /api/update` | `{enabled}` / `{action:"check"\|"restart"}` | updater status | See `Updater.java`. |
 | `GET /api/access` | | `{paired, local, signedIn, name}` | Whether the caller's key works here. No key needed. |
 | `POST /api/pair/request` | `{deviceId, name, kind}` | `{id, secret}` | A device asks for access; the Orchard window shows Allow / Deny. No key needed. |
@@ -77,6 +79,7 @@ app window. Handled by the `handlers` table in `store.js`.
 | `engine-ui` | `{show: true|false}` or `{toggle: true}` | Show/hide Apple's page in the app window |
 | `relay-lost` | `{}` | App window only: lost the connection to another speaker |
 | `pair-requests` | `[{id, name, kind}]` | Orchard window on this computer only: devices asking for access |
+| `change` | `{id, kind: "library", method, path, by, from, at}` or `{id, kind: "artwork", playlist, version, by}` | Something changed elsewhere: any successful `POST /api/am` write on this computer or on a linked one (favorites, library adds, playlist edits), or a playlist picture set on this computer. `by` = the device that made it (it ignores its own). Clients update hearts/pictures at once and re-read the affected library areas (`store.js onChange`). |
 
 SSE streams also carry `: ping` comments every 15 s and start with `retry: 2000`.
 

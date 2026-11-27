@@ -126,6 +126,13 @@ final class WebServer {
             ex.getResponseBody().write(img.bytes());
             return;
         }
+        if (method.equals("POST") && path.equals("/api/img/warm")) {
+            if (!local) throw new HttpError(403, "The artwork cache is only for the Orchard window on " + app.name());
+            List<String> urls = new java.util.ArrayList<>();
+            for (Object o : Json.list(body(ex).get("urls"))) if (o instanceof String u) urls.add(u);
+            sendJson(ex, 200, artCache.warm(urls));
+            return;
+        }
         String route = method + " " + path;
         if (!local && !PUBLIC.contains(route) && !authorized(ex, q)) {
             sendJson(ex, 401, Json.obj("error", "This device isn't paired with Orchard on " + app.name() + " yet.",
@@ -242,6 +249,7 @@ final class WebServer {
                 sendJson(ex, 200, Json.obj("ok", true));
             }
             case "POST /api/transfer" -> transfer(ex, body(ex));
+            case "POST /api/peer/change" -> peerChange(ex, body(ex));
             case "GET /api/update" -> sendJson(ex, 200, app.updater().status());
             case "POST /api/update" -> {
                 Map<String, Object> b = body(ex);
@@ -298,6 +306,31 @@ final class WebServer {
         send(ex, status, "application/json; charset=utf-8", body);
     }
 
+    /** A linked computer passing on a library change made through it (see {@link Orchard#announceChange}). */
+    private void peerChange(HttpExchange ex, Map<String, Object> c) {
+        String device = ex.getRequestHeaders().getFirst(Access.DEVICE_HEADER);
+        if (device == null || !device.startsWith("pc:") || !app.access().isLinked(device.substring(3))) {
+            throw new HttpError(403, "Only linked Orchard computers can send changes");
+        }
+        // Passed on to every client here: rebuilt from checked fields only, never forwarded as received.
+        String changeId = Json.str(c, "id");
+        String method = String.valueOf(Json.str(c, "method")).toUpperCase(Locale.ROOT);
+        String path = Json.str(c, "path");
+        if (changeId == null || !changeId.matches("[A-Za-z0-9-]{8,64}") || !"library".equals(Json.str(c, "kind"))
+                || !WRITE_METHODS.contains(method)) {
+            throw new HttpError(400, "Bad change");
+        }
+        validateApplePath(path);
+        app.announceChange(Json.obj("id", changeId, "kind", "library", "method", method, "path", path,
+                "by", deviceIdOrNull(Json.str(c, "by")), "from", device.substring(3),
+                "at", System.currentTimeMillis()), true);
+        sendJson(ex, 200, Json.obj("ok", true));
+    }
+
+    private static String deviceIdOrNull(String s) {
+        return s != null && s.matches("[A-Za-z0-9:._-]{1,64}") ? s : null;
+    }
+
     private void appleWrite(HttpExchange ex, Map<String, Object> req) throws IOException {
         String method = String.valueOf(req.get("method")).toUpperCase(Locale.ROOT);
         String path = Json.str(req, "path");
@@ -306,6 +339,9 @@ final class WebServer {
         Map<String, Object> r = app.engine().api(method, path, req.get("body"));
         int status = r.get("status") instanceof Number n ? n.intValue() : 502;
         String body = Json.str(r, "body");
+        // Every other open Orchard (here, phones, linked computers) shows the change at once. "origin" is the
+        // device that made it: that one has shown it already.
+        if (status >= 200 && status < 300) app.libraryChanged(method, path, deviceIdOrNull(Json.str(req, "origin")));
         // Edits and deletes usually answer "204 No Content", which must not carry a body.
         if (status == 204) body = "";
         else if (body == null || body.isEmpty()) body = "{}";
@@ -328,13 +364,21 @@ final class WebServer {
         String id = Json.str(req, "id");
         if ("delete".equals(op)) {
             artwork.delete(id);
+            artworkChanged(id, null, Json.str(req, "origin"));
             sendJson(ex, 200, Json.obj("ok", true));
         } else if ("put".equals(op)) {
             Long version = artwork.put(id, Json.str(req, "upload"), intArg(req, "part"), intArg(req, "parts"), Json.str(req, "data"));
+            if (version != null) artworkChanged(id, version, Json.str(req, "origin")); // the last part arrived
             sendJson(ex, 200, version == null ? Json.obj("ok", true) : Json.obj("ok", true, "version", version));
         } else {
             throw new HttpError(400, "Unknown artwork operation");
         }
+    }
+
+    /** A playlist picture kept on this computer changed: this computer's clients show it at once. */
+    private void artworkChanged(String playlistId, Long version, String origin) {
+        app.announceChange(Json.obj("id", java.util.UUID.randomUUID().toString(), "kind", "artwork",
+                "playlist", playlistId, "version", version, "by", deviceIdOrNull(origin)), false);
     }
 
     private static int intQuery(Map<String, String> q, String key, int def) {

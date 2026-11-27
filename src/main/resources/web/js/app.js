@@ -1,6 +1,7 @@
 // App shell: routing, sidebar library, global click handling and keyboard shortcuts.
 import { $, esc, icon, toast, store as persist } from './util.js';
 import { S, init, subscribe, toggleConsole, HOST_PROXY, browsable } from './store.js';
+import { initWarmup } from './warmup.js';
 import {
   getList, playList, playQueue, openMenu, closeMenu, trackMenuItems, collectionMenuItems, libraryList,
   markPlaying, loading, toggleLoved, queueIndexOf, trackMenuHead,
@@ -152,32 +153,101 @@ function bindSidebar() {
 
 let cleanup = null;
 let routeSeq = 0;
+let routing = false; // a page is being prepared (quiet redraws wait for it)
+
+// Pages are drawn out of sight first and shown once the pictures that will be on screen are decoded, so a page
+// appears whole instead of flashing empty boxes that fill in one by one. A click never waits long for that:
+// after NAV_WAIT_MS the page shows anyway and anything still downloading fills in as it arrives. A quiet redraw
+// (softRefresh) can wait longer, since the current page stays up meanwhile.
+const NAV_WAIT_MS = 200;
+const SOFT_WAIT_MS = 2000;
+
+/** A hidden spot in #main where the next page is laid out (so its pictures load and decode) before it's shown. */
+function stage(next) {
+  const box = document.createElement('div');
+  box.className = 'view-stage';
+  box.appendChild(next);
+  $('#main').appendChild(box);
+  return box;
+}
+
+/**
+ * Waits (at most `ms`) until the pictures that will be on screen when `next` is shown scrolled to `scrollTop`
+ * are decoded. Lazy ones among them are asked to load now.
+ */
+async function picturesReady(next, scrollTop, ms) {
+  if (ms <= 0) return;
+  const h = $('#main').clientHeight;
+  const nr = next.getBoundingClientRect();
+  const imgs = [...next.querySelectorAll('img')].filter((img) => {
+    const r = img.getBoundingClientRect();
+    const y = r.top - nr.top;
+    return r.width > 0 && y < scrollTop + h + 100 && y + r.height > scrollTop - 100
+      && r.left < nr.right && r.right > nr.left; // not the far end of a sideways shelf
+  });
+  if (!imgs.length) return;
+  imgs.forEach((img) => { if (img.loading === 'lazy') img.loading = 'eager'; });
+  let t = 0;
+  await Promise.race([
+    Promise.all(imgs.map((img) => img.decode().catch(() => {}))),
+    new Promise((r) => { t = setTimeout(r, ms); }),
+  ]);
+  clearTimeout(t);
+}
+
+/** Puts `next` in place of the current page (the page keeps references to the element it drew into). */
+function showPage(next, scrollTop) {
+  const box = next.parentElement;
+  next.id = 'view';
+  $('#view').replaceWith(next);
+  if (box && box.classList.contains('view-stage')) box.remove();
+  $('#main').scrollTop = scrollTop;
+  // A page that wants the keyboard (search) couldn't take it while hidden.
+  const af = next.querySelector('[data-autofocus]');
+  if (af && window.matchMedia('(pointer: fine)').matches && !next.contains(document.activeElement)) af.focus();
+}
+
+const runCleanup = (c) => { if (typeof c === 'function') { try { c(); } catch (e) { /* ignore */ } } };
 
 async function route() {
   closeMenu();
   closeDevices();
   const hash = location.hash || '#/';
   const seq = ++routeSeq;
-  if (cleanup) { try { cleanup(); } catch (e) { /* ignore */ } cleanup = null; }
-  const main = $('#main');
-  const view = $('#view');
-  for (const [re, fn] of routes) {
-    const m = hash.match(re);
-    if (!m) continue;
-    main.scrollTop = 0;
-    document.body.dataset.route = hash.split('/')[1] || 'home';
-    highlightNav();
-    try {
-      const c = await fn(view, m);
-      if (seq !== routeSeq) { if (typeof c === 'function') c(); return; }
-      cleanup = typeof c === 'function' ? c : null;
-    } catch (e) {
-      console.error(e);
-      if (seq === routeSeq) view.innerHTML = `<div class="empty"><h3>Something went wrong</h3><p>${esc(e.message)}</p></div>`;
-    }
+  runCleanup(cleanup);
+  cleanup = null;
+  document.querySelectorAll('.view-stage').forEach((b) => b.remove()); // an earlier page still being prepared
+  const match = routes.map(([re, fn]) => [hash.match(re), fn]).find(([m]) => m);
+  if (!match) {
+    $('#view').innerHTML = '<div class="empty"><h3>Page not found</h3></div>';
     return;
   }
-  view.innerHTML = '<div class="empty"><h3>Page not found</h3></div>';
+  const [m, fn] = match;
+  routing = true;
+  document.body.dataset.route = hash.split('/')[1] || 'home';
+  highlightNav();
+  const next = document.createElement('div');
+  const box = stage(next);
+  const deadline = performance.now() + NAV_WAIT_MS;
+  let shown = false;
+  const show = () => {
+    if (shown || seq !== routeSeq) return;
+    shown = true;
+    showPage(next, 0);
+  };
+  const slow = setTimeout(show, NAV_WAIT_MS); // still loading: show the page (its loading dots) now
+  try {
+    const c = await fn(next, m);
+    if (seq !== routeSeq) { runCleanup(c); box.remove(); return; } // a newer page took over
+    cleanup = typeof c === 'function' ? c : null;
+    if (!shown) await picturesReady(next, 0, deadline - performance.now());
+  } catch (e) {
+    console.error(e);
+    if (seq === routeSeq) next.innerHTML = `<div class="empty"><h3>Something went wrong</h3><p>${esc(e.message)}</p></div>`;
+  }
+  clearTimeout(slow);
+  show();
+  if (seq === routeSeq) routing = false;
 }
 
 /**
@@ -187,8 +257,11 @@ async function route() {
 let softTimer = 0;
 function softRefresh() {
   clearTimeout(softTimer);
-  // Not while a song is being dragged: the redraw would pull the row out from under the pointer.
-  softTimer = setTimeout(() => (isRowDragging() ? softRefresh() : doSoftRefresh()), isRowDragging() ? 300 : 60);
+  // Not while a song is being dragged (the redraw would pull the row out from under the pointer), nor while
+  // typing in the page (the redraw would take the text box away).
+  const typing = () => { const a = document.activeElement; return a && a.matches('input, textarea') && $('#view').contains(a); };
+  const busy = () => routing || isRowDragging() || typing();
+  softTimer = setTimeout(() => (busy() ? softRefresh() : doSoftRefresh()), busy() ? 300 : 60);
 }
 
 async function doSoftRefresh() {
@@ -196,29 +269,29 @@ async function doSoftRefresh() {
   const seq = ++routeSeq;
   const main = $('#main');
   const view = $('#view');
-  for (const [re, fn] of routes) {
-    const m = hash.match(re);
-    if (!m) continue;
-    const next = document.createElement('div');
-    let c;
-    try {
-      c = await fn(next, m, { soft: true, minTracks: view.querySelectorAll('.tracks .row:not(.head)').length });
-    } catch (e) {
-      console.error(e);
-      return;
-    }
-    if (seq !== routeSeq || (location.hash || '#/') !== hash) { if (typeof c === 'function') c(); return; }
-    if (next.querySelector('.loading') && !view.querySelector('.loading')) { if (typeof c === 'function') c(); return; } // not ready: keep what's shown
-    const top = main.scrollTop;
-    if (cleanup) { try { cleanup(); } catch (e) { /* ignore */ } }
-    cleanup = typeof c === 'function' ? c : null;
-    // Swap the whole container (not just its contents): the page keeps references to the element it drew into.
-    next.id = 'view';
-    view.replaceWith(next);
-    main.scrollTop = top;
-    markPlaying();
+  const match = routes.map(([re, fn]) => [hash.match(re), fn]).find(([m]) => m);
+  if (!match) return;
+  const [m, fn] = match;
+  const next = document.createElement('div');
+  const box = stage(next);
+  let c;
+  try {
+    c = await fn(next, m, { soft: true, minTracks: view.querySelectorAll('.tracks .row:not(.head)').length });
+  } catch (e) {
+    console.error(e);
+    box.remove();
     return;
   }
+  const stale = () => seq !== routeSeq || (location.hash || '#/') !== hash;
+  // Not ready (still loading): keep what's shown.
+  if (stale() || (next.querySelector('.loading') && !$('#view').querySelector('.loading'))) { runCleanup(c); box.remove(); return; }
+  await picturesReady(next, main.scrollTop, SOFT_WAIT_MS);
+  if (stale()) { runCleanup(c); box.remove(); return; }
+  const top = main.scrollTop;
+  runCleanup(cleanup);
+  cleanup = typeof c === 'function' ? c : null;
+  showPage(next, top);
+  markPlaying();
 }
 
 function highlightNav() {
@@ -356,6 +429,7 @@ async function boot() {
   bindGlobalClicks();
   bindKeys();
   initMosaics();
+  initWarmup();
   window.addEventListener('hashchange', route);
   // Pages draw once you're signed in, or straight away from the cache when you were signed in last time.
   let wasReady = browsable();

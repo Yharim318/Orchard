@@ -47,11 +47,16 @@ const ART_ROOT = location.hostname === 'music.apple.com' ? '/orchard' : '';
 const viaCache = (url) => (CACHE_ART && /^https:\/\/[a-z0-9-]+\.mzstatic\.com\//i.test(url)
   ? `${ART_ROOT}/api/img?u=${encodeURIComponent(url)}` : url);
 
+/** Apple's own address for a picture at a given pixel size (or null): what art() shows, before the cache. */
+export function appleArt(artwork, size = 300) {
+  const url = safeImageUrl(typeof artwork === 'string' ? artwork : artwork && artwork.url);
+  return url ? url.replace('{w}', size).replace('{h}', size).replace('{c}', 'bb').replace('{f}', 'jpg') : null;
+}
+
 /** Resolves an Apple artwork template ({w}x{h}) at a given pixel size. */
 export function art(artwork, size = 300) {
-  const url = safeImageUrl(typeof artwork === 'string' ? artwork : artwork && artwork.url);
-  if (!url) return PLACEHOLDER;
-  return viaCache(url.replace('{w}', size).replace('{h}', size).replace('{c}', 'bb').replace('{f}', 'jpg'));
+  const url = appleArt(artwork, size);
+  return url ? viaCache(url) : PLACEHOLDER;
 }
 
 /** A CSS colour from Apple's "bgColor" (hex digits), or '' if it is anything else. */
@@ -94,12 +99,18 @@ export function backdrop(bg) {
   };
 }
 
+/** Apple's own address for a wide picture (keeping its aspect ratio), or null. */
+export function appleArtWide(artwork, width = 1600) {
+  const url = safeImageUrl(artwork && artwork.url);
+  if (!url) return null;
+  const h = artwork.width && artwork.height ? Math.round((width * artwork.height) / artwork.width) : width;
+  return url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg');
+}
+
 /** Like art() but keeps the artwork's aspect ratio (for wide banners). */
 export function artWide(artwork, width = 1600) {
-  const url = safeImageUrl(artwork && artwork.url);
-  if (!url) return PLACEHOLDER;
-  const h = artwork.width && artwork.height ? Math.round((width * artwork.height) / artwork.width) : width;
-  return viaCache(url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg'));
+  const url = appleArtWide(artwork, width);
+  return url ? viaCache(url) : PLACEHOLDER;
 }
 
 export function fmtTime(sec) {

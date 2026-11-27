@@ -15,7 +15,8 @@ util.js  →  store.js  →  keys.js  →  components.js  →  artwork.js / play
 ```
 
 ```
-app.js ──► util, store, components, views, player, settings, updates, keys
+app.js ──► util, store, components, views, player, settings, updates, keys, warmup
+warmup.js ──► util, store, components, views, artwork
 player.js ──► util, store, components, lyrics, views, keys
 views.js ──► util, store, components, lyrics
 settings.js ──► util, playlists (openDialog), keys, updates
@@ -90,6 +91,7 @@ The hero colour comes from Apple's artwork `bgColor`: `views.setHero()` sets `--
 | `$`, `$$` | `querySelector` / `querySelectorAll` (as array). |
 | `esc(s)` | HTML-escape. **Use for every interpolated value.** |
 | `art(artwork, size)`, `artWide(artwork, width)` | Turn Apple's artwork URL template (`…/{w}x{h}bb.jpg`) into a real URL (square / keeping aspect ratio). `PLACEHOLDER` when missing. In the Orchard window (`?host`), Apple (`mzstatic.com`) URLs become `<ROOT>/api/img?u=…`, the server's disk cache; phones use Apple's URL directly. |
+| `appleArt(artwork, size)`, `appleArtWide(artwork, width)` | Apple's own address for the same picture (what `art()` resolves before the cache); `warmup.js` hands these to the server. |
 | `fmtTime(sec)`, `fmtTotal(sec)` | `3:45`, `1 hr 2 min`. |
 | `debounce`, `throttle` | Rate limiting (search box, volume slider). |
 | `toast(msg)` | Bottom notification. |
@@ -245,13 +247,27 @@ installed) and polls the status every 5 minutes (every 1.5 s while checking or d
 
 ---
 
+## `web/js/warmup.js`: loading everything ahead of time
+
+Orchard window only (`isHostApp`). 3 s after Apple Music is ready (and again after 12 h if the window stays open),
+`run()` walks the library lists, Home, every library playlist (all track pages), album, the Songs list, every
+artist (library → catalog page), then the albums/playlists on Home. Data goes through `store.prefetch(path,
+12 h)` using `views.PAGE_PATHS`/`withLimit`, so it lands in the exact cache entries the pages read. Pictures (at
+the sizes the pages use: rows 96, quick 120, cards 300, heroes 480, artist banners 2000 wide) are sent in batches
+of 100 to `POST /api/img/warm`; artist-page shelf pictures go last. Two requests at a time with 40 ms gaps;
+failures are retried after 5/20/60 s (429: at least 30 s). Stops if Apple Music signs out. Lyrics and music are
+not warmed. Keep `SIZE` in step with the sizes used in views/components.
+
+---
+
 ## `web/js/app.js`: shell, routing, global input
 
 | Function | Purpose |
 |----------|---------|
 | `buildShell()` | Static parts of the sidebar, library header and tab bar. |
 | `renderSidebarLibrary()`, `bindSidebar()` | Sidebar library (Favorite Songs, Songs, then playlists/albums/artists chips), "+" to create a playlist; re-renders on `library-changed`. |
-| `route()` | Matches `location.hash` against `views.routes`, runs the page's cleanup, renders the new page. Guards against out-of-order async renders with `routeSeq`. |
+| `route()` | Matches `location.hash` against `views.routes`, runs the page's cleanup, renders the new page into a hidden `.view-stage` (`stage`), waits until the pictures that will be on screen are decoded (`picturesReady`, at most `NAV_WAIT_MS` = 200 ms in total), then swaps it in (`showPage`, which also focuses `[data-autofocus]`). Still loading after 200 ms: shown anyway (loading dots), filling in as data arrives. Guards against out-of-order async renders with `routeSeq`; `routing` holds quiet redraws back meanwhile. |
+| `softRefresh()`, `doSoftRefresh()` | Quiet redraw of the current page (`view-refresh` / `data-updated` events): rendered staged, pictures decoded (up to 2 s, the old page stays up), swapped in at the same scroll position. Waits while navigating, dragging a song or typing in the page. |
 | `highlightNav()` | Marks the active nav/tab/library item. |
 | `bindGlobalClicks()` | `data-act` actions (`play-q`, `row-play`, `row-love`, `row-menu`), `data-href` navigation, tap-to-play on touch screens, double-click to play, right-click context menus. |
 | `bindKeys()`, `runAction(action)` | Every key goes through `keys.actionFor(comboOf(e))`. In a text box only Ctrl/Alt shortcuts count; with a dialog open only `apple`/`log`. `runAction` handles `apple` (toggle Apple's page), `log` (`toggleConsole`), `settings`, `search`, `sidebar`, and passes the rest to `player.playerAction`; when an action doesn't apply (e.g. Esc with no full-screen player) the key keeps its normal job. Holding a key repeats only seeking and volume. |

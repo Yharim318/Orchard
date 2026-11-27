@@ -1,7 +1,7 @@
 // Shared building blocks: data mapping, track lists, cards, context menus and play actions.
 import { $, esc, art, fmtTime, icon, EQ, toast } from './util.js';
 import { S, am, amWrite, cmd, patchState } from './store.js';
-import { playlistArtwork, mosaicFor, refreshMosaic } from './artwork.js';
+import { playlistArtwork, mosaicFor, refreshMosaic, setCustomArtwork } from './artwork.js';
 import { openPlaylistEditor, removeFromPlaylist } from './playlists.js';
 
 // ------------------------------------------------------------------ data mapping
@@ -446,6 +446,24 @@ export async function isLoved(catalogId) {
 }
 
 export const lovedCached = (catalogId) => loved.get(catalogId);
+
+// A favorite changed on another device or computer (store.js 'remote-change'): every heart here follows at once
+// (rows, the player bar, the full-screen player). A playlist picture set elsewhere on this computer shows too.
+document.addEventListener('remote-change', (e) => {
+  const c = e.detail || {};
+  if (c.kind === 'library' && typeof c.path === 'string') {
+    const m = c.path.match(/^\/v1\/me\/ratings\/songs\/([^/?]+)$/);
+    if (!m || !['PUT', 'DELETE'].includes(c.method)) return;
+    const id = decodeURIComponent(m[1]);
+    const value = c.method === 'PUT';
+    loved.set(id, value);
+    document.dispatchEvent(new CustomEvent('loved-changed', { detail: { id, value } }));
+    paintLoves();
+  } else if (c.kind === 'artwork' && typeof c.playlist === 'string') {
+    setCustomArtwork(c.playlist, typeof c.version === 'number' ? c.version : null);
+    playlistChanged({ id: c.playlist, artwork: true });
+  }
+});
 
 export async function setLoved(catalogId, value) {
   const path = `/v1/me/ratings/songs/${encodeURIComponent(catalogId)}`;

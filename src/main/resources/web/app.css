@@ -181,6 +181,9 @@ a.lib-tr:hover { background: var(--hover); color: var(--text); text-decoration: 
 .nav-btn { pointer-events: auto; width: 32px; height: 32px; border-radius: 50%; background: rgba(0, 0, 0, .55); display: grid; place-items: center; }
 .nav-btn .ic { width: 22px; height: 22px; }
 #view { min-height: 100%; }
+/* The next page, laid out out of sight while its pictures decode (app.js stage). Zero height + clipping: it adds
+   nothing to #main's scroll range. */
+.view-stage { position: absolute; top: 0; left: 0; right: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
 .page { padding: 28px 24px 40px; }
 .page-title { font-size: 28px; letter-spacing: -0.02em; margin: 4px 0 18px; }
 .greet { font-size: 30px; letter-spacing: -0.02em; margin: 4px 0 20px; }
@@ -483,7 +486,9 @@ body.shuffle-on [data-c="shuffle"]::after, body.repeat-on [data-c="repeat"]::aft
 body:not(.has-item) .center .progress { max-height: 0; margin-top: -6px; opacity: 0; overflow: hidden; transition-delay: 0s; }
 .progress .t-cur { text-align: right; }
 .right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
-.vol { flex: 0 0 84px; width: 84px; }
+/* A fixed, modest width (shrinks when the bar is tight, never grows). The generic .range rule below has flex: 1,
+   so this needs the extra specificity or the slider stretches across the whole column on wide screens. */
+.right .vol { flex: 0 1 100px; width: 100px; min-width: 56px; }
 .vol-pct { display: inline-flex; align-items: baseline; margin-left: -8px; padding: 3px 5px; border-radius: 4px; border: 1px solid transparent;
   color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; cursor: text; }
 .vol-pct:hover { background: var(--hover); color: var(--text); }

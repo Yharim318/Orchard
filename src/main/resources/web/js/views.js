@@ -12,7 +12,24 @@ import { openPlaylistEditor, playlistMenuItems, moveInPlaylist } from './playlis
 
 const enc = encodeURIComponent;
 const PLACEHOLDER_ART = { url: '' }; // menu header shows the music-note placeholder
-const withLimit = (next, n = 100) => next ? (next.includes('limit=') ? next : `${next}${next.includes('?') ? '&' : '?'}limit=${n}`) : null;
+export const withLimit = (next, n = 100) => next ? (next.includes('limit=') ? next : `${next}${next.includes('?') ? '&' : '?'}limit=${n}`) : null;
+
+// The Apple Music addresses each page reads. warmup.js loads the same ones ahead of time, so they're shared here:
+// a page and the warm-up must ask for exactly the same address to use the same cached copy.
+const ARTIST_VIEWS = 'views=top-songs,latest-release,full-albums,singles,appears-on-albums,featured-playlists,similar-artists&extend=artistBio,editorialArtwork';
+export const PAGE_PATHS = {
+  home: () => ['/v1/me/recent/played?limit=10', '/v1/me/recommendations?limit=10',
+    `/v1/catalog/${sf()}/charts?types=songs,albums,playlists&limit=20`],
+  album: (id) => (id.startsWith('l.') ? `/v1/me/library/albums/${enc(id)}?include=tracks,artists`
+    : `/v1/catalog/${sf()}/albums/${enc(id)}?include=tracks,artists`),
+  playlist: (id) => (id.startsWith('p.') ? `/v1/me/library/playlists/${enc(id)}?include=tracks`
+    : `/v1/catalog/${sf()}/playlists/${enc(id)}?include=tracks`),
+  playlistTracks: (id) => `/v1/me/library/playlists/${enc(id)}/tracks?limit=100`,
+  artist: (id) => `/v1/catalog/${sf()}/artists/${enc(id)}?${ARTIST_VIEWS}`,
+  libraryArtist: (id) => `/v1/me/library/artists/${enc(id)}?include=catalog`,
+  libraryArtistAlbums: (id) => `/v1/me/library/artists/${enc(id)}/albums?limit=100`,
+  songs: () => '/v1/me/library/songs?limit=100',
+};
 
 export function setHero(color) {
   $('#main').style.setProperty('--hero', hexColor(color) || 'var(--hero-default)');
@@ -85,11 +102,7 @@ async function home(el) {
   setHero(null);
   el.innerHTML = `<div class="page"><h1 class="greet">${greeting()}</h1><div class="home-body">${loading()}</div></div>`;
   const body = el.querySelector('.home-body');
-  const [recent, recs, charts] = await Promise.allSettled([
-    am('/v1/me/recent/played?limit=10'),
-    am('/v1/me/recommendations?limit=10'),
-    am(`/v1/catalog/${sf()}/charts?types=songs,albums,playlists&limit=20`),
-  ]);
+  const [recent, recs, charts] = await Promise.allSettled(PAGE_PATHS.home().map((path) => am(path)));
   let html = '';
   if (recent.status === 'fulfilled') {
     const cards = (recent.value.data || []).map(toCard).filter(Boolean).slice(0, 8);
@@ -224,7 +237,7 @@ function search(el, m) {
   input.addEventListener('input', onInput);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); run(input.value.trim()); } });
   run(initial);
-  if (!initial && window.matchMedia('(pointer: fine)').matches) input.focus();
+  if (!initial) input.dataset.autofocus = ''; // focused once the page is on screen (app.js showPage)
 }
 
 // ------------------------------------------------------------------ album
@@ -235,8 +248,7 @@ async function album(el, m) {
   el.innerHTML = loading();
   let res;
   try {
-    res = await am(lib ? `/v1/me/library/albums/${enc(id)}?include=tracks,artists`
-      : `/v1/catalog/${sf()}/albums/${enc(id)}?include=tracks,artists`);
+    res = await am(PAGE_PATHS.album(id));
   } catch (e) {
     el.innerHTML = errorBox(e, 'this album');
     return;
@@ -293,8 +305,7 @@ async function playlist(el, m, opts = {}) {
   el.innerHTML = loading();
   let res;
   try {
-    res = await am(lib ? `/v1/me/library/playlists/${enc(id)}?include=tracks`
-      : `/v1/catalog/${sf()}/playlists/${enc(id)}?include=tracks`);
+    res = await am(PAGE_PATHS.playlist(id));
   } catch (e) {
     el.innerHTML = errorBox(e, 'this playlist');
     return;
@@ -307,7 +318,7 @@ async function playlist(el, m, opts = {}) {
   let next = rel.next || null;
   if (lib && !rel.data) {
     try {
-      const t = await am(`/v1/me/library/playlists/${enc(id)}/tracks?limit=100`);
+      const t = await am(PAGE_PATHS.playlistTracks(id));
       tracks = (t.data || []).map(toTrack);
       next = t.next;
     } catch (e) { /* empty playlist returns 404 */ }
@@ -470,7 +481,7 @@ async function artist(el, m) {
   if (id.startsWith('r.')) return libraryArtist(el, id);
   let res;
   try {
-    res = await am(`/v1/catalog/${sf()}/artists/${enc(id)}?views=top-songs,latest-release,full-albums,singles,appears-on-albums,featured-playlists,similar-artists&extend=artistBio,editorialArtwork`);
+    res = await am(PAGE_PATHS.artist(id));
   } catch (e) {
     el.innerHTML = errorBox(e, 'this artist');
     return;
@@ -546,11 +557,11 @@ async function songArtist(el, m) {
 
 async function libraryArtist(el, id) {
   try {
-    const r = await am(`/v1/me/library/artists/${enc(id)}?include=catalog`);
+    const r = await am(PAGE_PATHS.libraryArtist(id));
     const d = r.data && r.data[0];
     const cat = d && d.relationships && d.relationships.catalog && d.relationships.catalog.data && d.relationships.catalog.data[0];
     if (cat) { location.replace(`#/artist/${cat.id}`); return; }
-    const albums = await am(`/v1/me/library/artists/${enc(id)}/albums?limit=100`);
+    const albums = await am(PAGE_PATHS.libraryArtistAlbums(id));
     setHero(null);
     el.innerHTML = `<div class="page">${heroHtml({ artwork: null, kind: 'Artist · Library', title: d ? d.attributes.name : 'Artist', meta: '', round: true })}
       <section class="shelf"><header><h2>Albums in your library</h2></header>${grid(albums.data)}</section></div>`;
@@ -740,7 +751,7 @@ async function songs(el) {
   el.innerHTML = loading();
   let r;
   try {
-    r = await am('/v1/me/library/songs?limit=100');
+    r = await am(PAGE_PATHS.songs());
   } catch (e) {
     el.innerHTML = errorBox(e, 'your songs');
     return;

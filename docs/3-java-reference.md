@@ -61,6 +61,7 @@ keep the process alive.
 | `self()` | This speaker as `{id, name, url:null, self:true}`. |
 | `info()` | `/api/info` body: `id, name, version, hostname, port, lanUrls, remotes[{url, kind, adapter}]`. |
 | `speakers()` | `self()` plus every `Discovery.Peer` as `{id, name, url, self:false}`. |
+| `announceChange(change, fromPeer)`, `libraryChanged(method, path, by)` | Change signals: broadcast a `change` event to every client here (deduplicated by id) and, for library changes made here, `POST /api/peer/change` to every linked computer (one hop). Called by `WebServer.appleWrite` after a successful write and by `artworkWrite`. |
 | `remoteAddresses()` / `lanAddresses()` | Addresses phones can use (re-read on every call, so Wi-Fi/VPN changes are picked up). Empty with `--local`. |
 
 ---
@@ -107,6 +108,7 @@ so it loads instantly next time, even with a bad or no connection. Never touches
 |--------|--------------|
 | `allowed(url)` | Only `https://*.mzstatic.com/…` (no user info, default port): the cache can't be used to fetch anything else. |
 | `get(url)` | Disk hit → bytes (and refresh the file date at most hourly, for the LRU order). Miss → one download per picture however many ask (`loading`), checked to be JPEG/PNG/WebP/GIF, ≤ 20 MB, written via a temp file. Apple's 404 → 404, other failures → 502 (the UI keeps retrying). |
+| `warm(urls)` | `POST /api/img/warm`: queue uncached pictures for 3 background workers (`warmWorker`). Refuses new ones (and drops the queue) above 85% of the limit, so warming never evicts pictures that were looked at. |
 | `trimIfNeeded()` | Over the limit (`ORCHARD_CACHE_MB`, default 1024): delete the least recently viewed files until 90% of the limit is used. Also runs once at startup after counting the folder. |
 
 ---

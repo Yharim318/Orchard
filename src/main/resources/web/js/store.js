@@ -146,6 +146,14 @@ const FORGET_MS = 60 * 24 * 3600 * 1000;     // copies not refreshed for 60 days
 const mem = new Map();       // path -> { at, text }
 const inflight = new Map();  // path -> { p: Promise<text>, started }
 let lastWriteAt = 0;
+// Parts of the library changed elsewhere (another device or computer; 'change' events): path prefix -> when.
+// Copies under such a prefix made before that are fetched again before being shown, like after a local edit.
+const changedAt = new Map();
+function editedSince(path) {
+  let t = lastWriteAt;
+  for (const [prefix, at] of changedAt) if (at > t && path.startsWith(prefix)) t = at;
+  return t;
+}
 const isMine = (path) => !path.startsWith('/v1/catalog/');
 
 let apiDbp = null;
@@ -267,10 +275,11 @@ export async function am(path, { fresh = false } = {}) {
   }
   if (!hit) return JSON.parse(await fetchFresh(path));
   mem.set(path, hit);
-  if (mine && hit.at < lastWriteAt) {
+  const edited = mine ? editedSince(path) : 0;
+  if (mine && hit.at < edited) {
     // Changed here since this copy was made: ask Apple first; the copy is only for when Apple can't be reached.
     try {
-      return JSON.parse(await fetchFresh(path, lastWriteAt));
+      return JSON.parse(await fetchFresh(path, edited));
     } catch (e) {
       if (e.status && e.status < 500) throw e;
       return JSON.parse(hit.text);
@@ -283,13 +292,38 @@ export async function am(path, { fresh = false } = {}) {
   return JSON.parse(hit.text); // a new object each time: pages may change what they're given
 }
 
+/**
+ * For the warm-up (warmup.js): makes sure `path` is cached, fetching it only if there's no copy or the copy is
+ * older than `maxAgeMs`. Fills the cache quietly (no redraws) and returns the data, or null when Apple has
+ * nothing there (404).
+ */
+export async function prefetch(path, maxAgeMs) {
+  if (isMine(path) && signedOut()) return null;
+  let hit = mem.get(path);
+  if (!hit) {
+    hit = await diskGet(path);
+    if (hit) hit.disk = true; // am() still checks it again once when a page shows it
+  }
+  if (hit && !(isMine(path) && hit.at < editedSince(path)) && Date.now() - hit.at < maxAgeMs) {
+    if (!mem.has(path)) mem.set(path, hit);
+    return JSON.parse(hit.text);
+  }
+  try {
+    return JSON.parse(await fetchFresh(path));
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}
+
 export async function amWrite(method, path, body) {
   lastWriteAt = Date.now();
   try {
     return await http(ROOT + '/api/am', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method, path, body }),
+      // origin: this device made the change, so the 'change' event it causes is skipped here (shown already).
+      body: JSON.stringify({ method, path, body, origin: deviceId() }),
     });
   } finally {
     lastWriteAt = Date.now(); // reads that started during the write may have kept the old answer
@@ -465,6 +499,34 @@ export function normalizeSpeakers(list) {
   })).filter((sp) => sp.base !== null);
 }
 
+// ------------------------------------------------------------------ changes made elsewhere
+
+/** Which cached library areas a change to `path` can affect. */
+function affectedBy(path) {
+  if (path.startsWith('/v1/me/ratings/')) return ['/v1/me/ratings', '/v1/me/library/playlists']; // + "Favorite Songs"
+  if (path.startsWith('/v1/me/library/playlists')) return ['/v1/me/library/playlists'];
+  if (path.startsWith('/v1/me/library')) return ['/v1/me/library'];
+  return ['/v1/me/'];
+}
+
+/**
+ * A 'change' event: { kind: 'library', method, path, by } or { kind: 'artwork', playlist, version, by }.
+ * Fires a 'remote-change' DOM event (hearts and pictures update from it at once), then redraws the sidebar and
+ * the page from Apple. Apple's library can take a few seconds to reflect an edit, so that happens twice.
+ */
+function onChange(d) {
+  if (!d || typeof d !== 'object' || (d.by && d.by === deviceId())) return; // our own: shown already
+  document.dispatchEvent(new CustomEvent('remote-change', { detail: d }));
+  if (d.kind !== 'library' || typeof d.path !== 'string') return;
+  for (const ms of [600, 6000]) {
+    setTimeout(() => {
+      const now = Date.now();
+      affectedBy(d.path).forEach((prefix) => changedAt.set(prefix, now));
+      document.dispatchEvent(new CustomEvent('data-updated'));
+    }, ms);
+  }
+}
+
 const handlers = {
   hello: (d) => {
     S.speaker = d.speaker;
@@ -477,6 +539,8 @@ const handlers = {
   speakers: (d) => { S.speakers = normalizeSpeakers(d); notify('speakers'); },
   'engine-ui': (d) => { S.engineUi = d; notify('engine-ui'); },
   'pair-requests': (d) => { S.pairRequests = Array.isArray(d) ? d : []; notify('pair-requests'); },
+  // Something changed on another device or computer (Orchard.announceChange): show it here too, at once.
+  change: (d) => onChange(d),
   'relay-lost': () => {
     toast('Lost the other speaker — switching back to this one');
     useSpeaker('');
