@@ -27,11 +27,15 @@ public final class Main {
         boolean headless;
         boolean engineWindow;
         boolean console;
+        boolean noUpdate;
+        long waitFor = -1;
         final List<String> peers = new ArrayList<>();
     }
 
     public static void main(String[] args) throws Exception {
         Options o = parse(args);
+        // Restarted by an update: the old Orchard is still closing its browser; let it finish first.
+        if (o.waitFor > 0) Updater.waitForExit(o.waitFor);
         List<String> notes = new ArrayList<>(); // logged once the log file is ours
         Path dataDir = o.dataDir != null ? o.dataDir : defaultDataDir(o.port, notes);
         Files.createDirectories(dataDir);
@@ -45,6 +49,9 @@ public final class Main {
                 app::speakers);
         Discovery discovery = new Discovery(id, name, o.port, o.peers, () -> hub.broadcast("speakers", app.speakers()));
         app.init(hub, discovery);
+        Updater updater = new Updater(dataDir, List.of(args), o.noUpdate,
+                () -> Boolean.TRUE.equals(app.state().get("isPlaying")));
+        app.setUpdater(updater);
 
         WebServer server;
         try {
@@ -61,6 +68,7 @@ public final class Main {
         notes.forEach(Log::info);
         server.start();
         if (!o.localOnly) discovery.start();
+        updater.start();
 
         String localUrl = "http://localhost:" + o.port + "/";
         Log.out("");
@@ -158,6 +166,14 @@ public final class Main {
                 case "--engine-window" -> o.engineWindow = true;
                 case "--debug" -> Log.debug = true;
                 case "--console" -> o.console = true;
+                case "--no-update" -> o.noUpdate = true;
+                case "--wait-for" -> o.waitFor = Long.parseLong(next(args, ++i, a));
+                case "--version" -> {
+                    // Also used by the updater to check that a downloaded orchard.exe starts.
+                    System.out.println(Orchard.VERSION);
+                    System.out.flush();
+                    System.exit(0);
+                }
                 case "-h", "--help" -> {
                     Log.out("""
                             Orchard - a Spotify-style Apple Music client with remote control.
@@ -173,6 +189,8 @@ public final class Main {
                               --no-browser      Run the server only (no playback on this machine)
                               --engine-window   Run Apple Music in its own (minimized) window instead
                                                 of hidden inside the Orchard window
+                              --no-update       Don't update orchard.exe from GitHub during this run
+                              --version         Print the version and exit
                               --console         Open the log window at startup (Windows; otherwise
                                                 Ctrl+Shift+T in the Orchard window opens/closes it)
                               --debug           Verbose logging

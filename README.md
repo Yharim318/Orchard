@@ -86,6 +86,18 @@ build.cmd --jar      :: JAR only
 > binary: it needs a Linux Chrome inside WSL, and with WSL's default NAT networking your phone can't reach
 > it. For a Windows PC, build with `build.cmd` on Windows.
 
+## Updates
+
+Release builds of `orchard.exe` update themselves. Download `orchard.exe` from the
+[latest release](https://github.com/Yharim318/Orchard/releases/latest) and put it in a folder you own (not
+`Program Files`). Orchard checks GitHub for a new release a few times a day. It installs one in the background, and
+the new version starts the next time Orchard does. It also restarts by itself after 30 minutes with nothing
+playing. Settings > Updates turns this on or off, and has "Check now". Builds you make yourself with `build.cmd`
+never update on their own.
+
+To publish a release, run **Actions > Release > Run workflow** on GitHub with a new version number (or push a tag
+like `v0.2.0`). See [docs/6-build-and-config.md](docs/6-build-and-config.md#releases-and-automatic-updates).
+
 ## Run
 
 ```bash
@@ -125,6 +137,8 @@ build/orchard                 # or: java -jar build/orchard.jar
 | `--engine-window` | Run Apple Music in its own minimized window instead of hidden inside Orchard |
 | `--console` | Windows: open the log window at startup (otherwise Ctrl+Shift+T opens/closes it) |
 | `--debug` | Verbose logging (also `ORCHARD_DEBUG=1`) |
+| `--no-update` | Don't update `orchard.exe` from GitHub during this run (also `ORCHARD_NO_UPDATE=1`) |
+| `--version` | Print the version and exit |
 
 ### Shortcuts
 

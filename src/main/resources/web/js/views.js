@@ -78,6 +78,9 @@ function infinite(el, next, onPage) {
 
 // ------------------------------------------------------------------ home
 
+// A home page that didn't fully load redraws itself quietly, waiting longer each time (1 s, 2 s, 4 s… up to 30 s).
+let homeRetryDelay = 0;
+
 async function home(el) {
   setHero(null);
   el.innerHTML = `<div class="page"><h1 class="greet">${greeting()}</h1><div class="home-body">${loading()}</div></div>`;
@@ -123,6 +126,12 @@ async function home(el) {
   }
   body.innerHTML = html;
   markPlaying(el);
+  if (![recent, recs, charts].some((x) => x.status === 'rejected')) { homeRetryDelay = 0; return; }
+  // Not signed in / Apple Music not started: the page is redrawn when that changes, nothing to retry yet.
+  if (!S.state.ready || !S.state.authorized) return;
+  homeRetryDelay = Math.min(homeRetryDelay ? homeRetryDelay * 2 : 1000, 30000);
+  const t = setTimeout(() => document.dispatchEvent(new CustomEvent('view-refresh')), homeRetryDelay);
+  return () => clearTimeout(t);
 }
 
 // ------------------------------------------------------------------ search

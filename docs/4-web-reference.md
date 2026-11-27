@@ -11,14 +11,15 @@ first, so module code runs in this order:
 
 ```
 util.js  →  store.js  →  keys.js  →  components.js  →  artwork.js / playlists.js  →  lyrics.js  →  views.js
-        →  player.js  →  settings.js  →  app.js (boot)
+        →  player.js  →  updates.js  →  settings.js  →  app.js (boot)
 ```
 
 ```
-app.js ──► util, store, components, views, player, settings, keys
+app.js ──► util, store, components, views, player, settings, updates, keys
 player.js ──► util, store, components, lyrics, views, keys
 views.js ──► util, store, components, lyrics
-settings.js ──► util, playlists (openDialog), keys
+settings.js ──► util, playlists (openDialog), keys, updates
+updates.js ──► util, store
 keys.js ──► util
 components.js ──► util, store
 lyrics.js ──► util, store
@@ -95,7 +96,7 @@ The hero colour comes from Apple's artwork `bgColor`: `views.setHero()` sets `--
 | `greeting()` | "Good morning/afternoon/evening/night". |
 | `icon(name, cls)` | Inline SVG from the `P` path table (Material icons). **Add new icons to `P`.** |
 | `EQ` | The animated equaliser markup. |
-| `BACKDROP`, `backdrop(el)` | Markup for the blurred-artwork background, and `update(item)` for it (cross-fades two layers on a track change). Used by the full-screen player, the lyrics page and the lyrics sidebar. |
+| `BACKDROP`, `backdrop(el)` | Markup for the blurred-artwork background, and `update(item)` for it (cross-fades two layers on a track change). Each layer is a 64×64 `<canvas>` that the artwork is drawn into once with a canvas blur plus the layer's CSS `--fp-tone` (saturate/brightness), then stretched by CSS. Don't put a CSS `filter: blur()` on the turning layers: recomputing it every frame at full-screen size starved the page of frames. Used by the full-screen player, the lyrics page and the lyrics sidebar. |
 
 ---
 
@@ -182,7 +183,7 @@ A page returning a function gets it called when the user navigates away (unsubsc
 | Markup | `buildPlayer()` creates the desktop bar, phone mini player, "Listening on" banner and the full-screen player; `controlsHtml`, `seekHtml`. |
 | Rendering | `update()` refreshes titles, artwork, body classes, volume, banner, document title and hearts on every state change; `tick()` redraws progress every 250 ms; `setRange`; `updateLove`/`paintLove`. |
 | Controls | `control(name, button)` handles every `data-c` button: `toggle, next, prev, shuffle, repeat` (Spotify order off → all → one), `mute, love, devices, queue, lyrics` (`toggleLyrics`), `lyrics-side/-page/-full/-close` (the lyrics view buttons), `seekBack`/`seekFwd` (`seekBy(±keys.seekStep())`), `open-full` (the bar's artwork), `close-full`, `fp-lyrics`/`fp-queue` (the full-screen player's panel), `fp-fullscreen` (browser full screen), `item-menu`. Esc closes the full-screen view. `playerAction(name)` is the same, exported for keyboard shortcuts. `bindControls()` wires clicks, the seek sliders (send on release) and the throttled volume slider. |
-| Full-screen player | `openFull({lyrics})`, `closeFull`/`hideFull` (integrated with the back button via `history.pushState`), `setFullPanel('lyrics'|'queue'|null)` (the `.fp-panel` beside the artwork: `mountLyrics`, or `views.renderQueue` showing only what's up next; toggles `#fullplayer.panel-on` plus `lyrics-on`/`queue-on`; the move to the two-column layout is animated with `document.startViewTransition` where available), `fullBackdrop` (`util.backdrop`), `updateDevicePill` (the quiet "<speaker> · <output>" label in the header's top-right corner, which opens the device picker along the right edge; `currentOutput` shortens the output name). While lyrics show, the header also has `.fp-lyr-views` (switch to the sidebar or page lyrics). One markup for every size: `.fp-stage` is a CSS grid whose areas (`art meta progress controls bottom panel`) are rearranged by `app.css`: centred column; with a panel, that column on the left and the panel on the right; on phones, a small artwork + title above the panel. |
+| Full-screen player | `openFull({lyrics})`, `closeFull`/`hideFull` (integrated with the back button via `history.pushState`), `setFullPanel('lyrics'|'queue'|null)` (the `.fp-panel` beside the artwork: `mountLyrics`, or `views.renderQueue` showing only what's up next; toggles `#fullplayer.panel-on` plus `lyrics-on`/`queue-on`; the move to the two-column layout is animated with `document.startViewTransition` where available), `fullBackdrop` (`util.backdrop`), `preloadNextArtwork` (fetches the next queued song's 1000 px and 120 px artwork so the picture changes with the title), `updateDevicePill` (the quiet "<speaker> · <output>" label in the header's top-right corner, which opens the device picker along the right edge; `currentOutput` shortens the output name). While lyrics show, the header also has `.fp-lyr-views` (switch to the sidebar or page lyrics). One markup for every size: `.fp-stage` is a CSS grid whose areas (`art meta progress controls bottom panel`) are rearranged by `app.css`: centred column; with a panel, that column on the left and the panel on the right; on phones, a small artwork + title above the panel. |
 | Lyrics views | `toggleLyrics()` (bar button: open or close the lyrics sidebar), `showLyrics('side'|'full')` (`full` opens the full-screen player, a feature of its own that's never remembered; `side` closes the full-screen player first; under 1100 px, where there is no sidebar, lyrics open in the full-screen player), `closeLyrics()`, `markLyricsButton()`, `setMainCollapsed(on)` (`body.main-collapsed`: the middle column collapses and the lyrics sidebar spreads over it, animated like the left sidebar; wide windows only; undone by navigating, switching the panel to the queue or closing lyrics). |
 | Right panel | `toggleRight('queue'|'lyrics')`, `renderRight()` (remembered in `localStorage['orchard.right']`; lyrics mode adds the blurred backdrop). |
 | Devices / pairing | `openDevices`, `closeDevices`, `devicesHtml` (current speaker, its audio outputs via `outputsHtml`, other speakers, connected remotes), `pairingHtml` (address tabs + hints), `loadQr`/`renderQr` (loads `vendor/qrcode.js` on demand). |
@@ -224,6 +225,12 @@ for letters and named keys), `actionFor(combo)`, `reserved(combo)`, `label`/`key
 (Playback, Views, App; App-window-only ones are hidden elsewhere). "+" records a key: it listens on `window` in
 the capture phase so it runs before the dialog's Esc handler and the app's shortcuts, so Esc cancels and can't
 be recorded itself. Hovering a key shows its ✕. A key already used by another action moves to the new one.
+
+`updates.js`: automatic updates (`Updater.java`, `/api/update`), always on the Orchard that served the page, never
+a speaker it controls. `initUpdates()` adds the sidebar's "Restart to update" item (shown once an update is
+installed) and polls the status every 5 minutes (every 1.5 s while checking or downloading).
+`updateSettingsHtml()`/`bindUpdateSettings(el)` are the Settings dialog's Updates section: the on/off switch,
+`describe(status)`, Check now and Restart now.
 
 ---
 

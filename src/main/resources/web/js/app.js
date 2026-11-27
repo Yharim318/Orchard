@@ -8,6 +8,7 @@ import {
 import { routes, libraryRow } from './views.js';
 import { initPlayer, closeDevices, toggleEngine, hasEngineFrame, playerAction } from './player.js';
 import { openSettings } from './settings.js';
+import { initUpdates } from './updates.js';
 import { comboOf, actionFor, firstKey } from './keys.js';
 import { initShelves } from './shelves.js';
 import { initVerticalBars } from './scrollbars.js';
@@ -81,8 +82,13 @@ function shortcutHints() {
 // ------------------------------------------------------------------ sidebar library
 
 let libKind = persist('orchard.libKind') || 'playlists';
+// A failed load tries again by itself, waiting longer each time (Apple Music can still be starting up).
+let libRetry = 0;
+let libRetryDelay = 0;
 
-async function renderSidebarLibrary() {
+async function renderSidebarLibrary({ retry = false } = {}) {
+  clearTimeout(libRetry);
+  if (!retry) libRetryDelay = 0;
   const chips = $('#lib-chips');
   chips.innerHTML = ['playlists', 'albums', 'artists'].map((k) =>
     `<button class="chip${k === libKind ? ' on' : ''}" data-k="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('');
@@ -95,7 +101,7 @@ async function renderSidebarLibrary() {
   }
   // Show the loading dots only when switching lists; a refresh of the same list swaps in quietly.
   const shown = list.dataset.kind === libKind && list.querySelector('.lib-item:not(.songs-link)');
-  if (!shown) list.innerHTML = songsLink + loading();
+  if (!shown && !retry) list.innerHTML = songsLink + loading(); // a retry keeps the error up until it works
   list.dataset.kind = libKind;
   const kind = libKind;
   try {
@@ -107,8 +113,12 @@ async function renderSidebarLibrary() {
       list.dataset.html = html;
     }
     highlightNav();
+    libRetryDelay = 0;
   } catch (e) {
-    if (!shown) list.innerHTML = songsLink + `<p class="dev-note">Couldn't load your library (${esc(e.message)}).</p>`;
+    if (kind !== libKind) return;
+    if (!shown) list.innerHTML = songsLink + `<p class="dev-note">Couldn't load your library (${esc(e.message)}). Trying again…</p>`;
+    libRetryDelay = Math.min(libRetryDelay ? libRetryDelay * 2 : 1000, 30000);
+    libRetry = setTimeout(() => renderSidebarLibrary({ retry: true }), libRetryDelay);
   }
 }
 
@@ -334,6 +344,7 @@ function bindKeys() {
 
 async function boot() {
   buildShell();
+  initUpdates();
   initPlayer();
   initShelves();
   initVerticalBars();

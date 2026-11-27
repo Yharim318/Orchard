@@ -136,6 +136,17 @@ final class WebServer {
                 sendJson(ex, 200, Json.obj("ok", true));
             }
             case "POST /api/transfer" -> transfer(ex, body(ex));
+            case "GET /api/update" -> sendJson(ex, 200, app.updater().status());
+            case "POST /api/update" -> {
+                Map<String, Object> b = body(ex);
+                Updater u = app.updater();
+                Object on = b.get("enabled");
+                String action = Json.str(b, "action");
+                if (on instanceof Boolean e) sendJson(ex, 200, u.setEnabled(e));
+                else if ("check".equals(action)) sendJson(ex, 200, u.checkNow());
+                else if ("restart".equals(action)) sendJson(ex, 200, u.restartNow());
+                else throw new HttpError(400, "Expected {enabled: true|false} or {action: \"check\"|\"restart\"}");
+            }
             default -> throw new HttpError(404, "Not found");
         }
     }

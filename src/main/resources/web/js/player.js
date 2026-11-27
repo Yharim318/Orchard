@@ -109,8 +109,9 @@ function update() {
   body.classList.toggle('repeat-one', s.repeat === 1);
 
   const { title, artistName } = item ? itemLinks(item) : { title: '', artistName: '' };
-  document.querySelectorAll('.np-title').forEach((n) => { n.innerHTML = title; });
-  document.querySelectorAll('.np-artist').forEach((n) => { n.innerHTML = artistName; });
+  const fullSong = beginSongChange(s);
+  live('.np-title').forEach((n) => { n.innerHTML = title; });
+  live('.np-artist').forEach((n) => { n.innerHTML = artistName; });
   document.querySelectorAll('.mini-sub').forEach((n) => {
     n.innerHTML = S.speaker && !isLocalOnly() ? `${icon('speaker')} ${esc(S.speaker.name)}` : esc(item ? item.artist : '');
   });
@@ -131,7 +132,9 @@ function update() {
   if (big.getAttribute('src') !== bigSrc) big.src = bigSrc;
   $('.fp-album').innerHTML = item && item.album
     ? (item.albumId ? `<a href="#/album/${esc(item.albumId)}">${esc(item.album)}</a>` : esc(item.album)) : '';
+  if (fullSong) finishSongChange(fullSong);
   if (fullBackdrop) fullBackdrop(item);
+  preloadNextArtwork(s);
   updateDevicePill(s);
 
   document.querySelectorAll('.vol').forEach((vol) => {
@@ -154,6 +157,85 @@ function update() {
 }
 
 let fullBackdrop = null;
+
+/** Elements matching sel, without the outgoing-song copies of a running song-change animation. */
+const live = (sel) => [...document.querySelectorAll(sel)].filter((n) => !n.closest('.fp-ghost'));
+
+// ------------------------------------------------------------------ full-screen player: song change animation
+
+// A crossfade in place: the outgoing artwork and text are copied ("ghosts") just before update() swaps in the new
+// song, laid exactly over the new ones and faded out while the new ones fade in. Nothing moves. The real content
+// changes at once, so nothing waits for the animation.
+let shownSongId = null;
+let songAnims = [];
+
+/** Called at the start of update(): copies the outgoing song when the full-screen player is about to change song. */
+function beginSongChange(s) {
+  const id = s.item ? s.item.id : null;
+  const prevId = shownSongId;
+  shownSongId = id;
+  const fp = $('#fullplayer');
+  if (!id || !prevId || id === prevId || fp.hidden || !fp.classList.contains('open')) return null;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+  stopSongChange();
+  const art = $('.fp-art');
+  const text = $('.fp-text');
+  const artGhost = art.cloneNode();
+  const textGhost = text.cloneNode(true);
+  for (const g of [artGhost, textGhost]) { g.classList.add('fp-ghost'); g.setAttribute('aria-hidden', 'true'); }
+  return { art, text, artGhost, textGhost };
+}
+
+/** Called once update() has put in the new song: plays the crossfade. */
+function finishSongChange({ art, text, artGhost, textGhost }) {
+  art.parentElement.appendChild(artGhost);
+  text.appendChild(textGhost);
+  const fade = (el, out, opts) => {
+    const a = el.animate([{ offset: out ? 1 : 0, opacity: 0 }], { easing: 'ease-in-out', ...opts });
+    songAnims.push(a);
+    const drop = () => { songAnims = songAnims.filter((x) => x !== a); };
+    a.finished.then(drop, drop);
+    if (out) a.finished.then(() => el.remove(), () => el.remove());
+    return a;
+  };
+  // Text: the old lines fade out while the new ones fade in.
+  fade(textGhost, true, { duration: 260, fill: 'forwards' });
+  [...text.children].filter((n) => n !== textGhost).forEach((n) => fade(n, false, { duration: 360, delay: 120, fill: 'backwards' }));
+  // Artwork: the old picture stays on top until the new one can be drawn (usually at once: it was preloaded),
+  // then fades away to reveal it.
+  const ready = art.complete && art.naturalWidth ? Promise.resolve()
+    : Promise.race([art.decode().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+  ready.then(() => {
+    if (artGhost.isConnected) fade(artGhost, true, { duration: 450, fill: 'forwards' });
+  });
+}
+
+/** Ends a running song change at once (the next song came before it finished, or the player closed). */
+function stopSongChange() {
+  songAnims.forEach((a) => a.cancel());
+  songAnims = [];
+  document.querySelectorAll('#fullplayer .fp-ghost').forEach((g) => g.remove());
+}
+
+/**
+ * Fetches the next song's artwork ahead of time (the full-screen player's big picture and the small one the bar and
+ * backdrops use), so they change together with the title when the song does instead of waiting for a download.
+ */
+let preloaded = null;
+const preloads = [];
+function preloadNextArtwork(s) {
+  const q = s.queue;
+  const next = q && q.items ? q.items[q.position - q.offset + 1] : null;
+  const url = next && next.artwork;
+  if (!url || url === preloaded) return;
+  preloaded = url;
+  preloads.length = 0; // keep the Image objects alive until their download finishes, then let them go
+  for (const size of [1000, 120]) {
+    const img = new Image();
+    img.src = art(url, size);
+    preloads.push(img);
+  }
+}
 
 const isHeadphones = (label) => /head|bud|pods|wh-|wf-|bose|beats|xm\d/i.test(label || '');
 
@@ -431,6 +513,7 @@ function openFull({ lyrics = false } = {}) {
 function hideFull() {
   const fp = $('#fullplayer');
   fp.classList.remove('open');
+  stopSongChange();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   setTimeout(() => {
     if (fp.classList.contains('open')) return; // reopened meanwhile

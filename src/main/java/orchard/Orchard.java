@@ -7,6 +7,11 @@ import java.util.Map;
 /** Application context shared by the web server, hub and engine. */
 final class Orchard {
     static final String VERSION = "0.1.0";
+    /**
+     * True only in builds made by the GitHub release workflow (.github/workflows/release.yml sets it, together with
+     * VERSION). Builds made with build.cmd never replace themselves with a release on their own.
+     */
+    static final boolean RELEASE_BUILD = false;
 
     /** Environment setting {@code ORCHARD_<name>}, or {@code JUICE_<name>} from before the app was renamed. */
     static String env(String name) {
@@ -23,6 +28,7 @@ final class Orchard {
     private volatile String engineProblem = "Starting Apple Music…";
     private Hub hub;
     private Discovery discovery;
+    private Updater updater;
 
     Orchard(String id, String name, int port, boolean lan) {
         this.id = id;
@@ -34,6 +40,14 @@ final class Orchard {
     void init(Hub hub, Discovery discovery) {
         this.hub = hub;
         this.discovery = discovery;
+    }
+
+    void setUpdater(Updater u) {
+        updater = u;
+    }
+
+    Updater updater() {
+        return updater;
     }
 
     Hub hub() {

@@ -1,7 +1,9 @@
-// Settings dialog: keyboard shortcuts (every action, several keys each) and how far rewind / fast-forward move.
+// Settings dialog: keyboard shortcuts (every action, several keys each), how far rewind / fast-forward move, and
+// automatic updates.
 import { esc, icon, toast } from './util.js';
 import { HOST_PROXY } from './store.js';
 import { openDialog } from './playlists.js';
+import { updateSettingsHtml, bindUpdateSettings } from './updates.js';
 import {
   ACTIONS, MAX_KEYS, DEFAULT_STEP, bindings, addBinding, removeBinding, resetBindings, seekStep, setSeekStep,
   comboOf, reserved, label, keycaps,
@@ -12,6 +14,7 @@ let open = null;
 export function openSettings() {
   if (open) return;
   let recording = null; // action id waiting for a key
+  let stopUpdates = null;
   const actions = ACTIONS.filter((a) => !a.host || HOST_PROXY);
   const dlg = openDialog(`
     <header class="dlg-head"><h2 class="dlg-title">Settings</h2>
@@ -20,6 +23,7 @@ export function openSettings() {
       <h3>Rewind and fast-forward</h3>
       <label class="set-step">Move by <input type="number" min="1" max="600" step="1" inputmode="numeric"> seconds</label>
     </section>
+    ${updateSettingsHtml()}
     <section class="set-sec">
       <h3>Keyboard shortcuts</h3>
       <p class="set-hint">Press <b>+</b> next to an action, then the key or combination you want (Esc cancels).
@@ -27,10 +31,11 @@ export function openSettings() {
       <div class="set-keys"></div>
     </section>
     <footer class="dlg-foot"><button class="btn ghost" data-reset>Reset to defaults</button><button class="btn primary" data-x>Done</button></footer>`,
-  { onClose: () => { window.removeEventListener('keydown', onKey, true); open = null; } });
+  { onClose: () => { window.removeEventListener('keydown', onKey, true); if (stopUpdates) stopUpdates(); open = null; } });
   open = dlg;
   const el = dlg.el;
   el.classList.add('dlg-wide', 'settings');
+  stopUpdates = bindUpdateSettings(el);
   const stepInput = el.querySelector('.set-step input');
   stepInput.placeholder = String(DEFAULT_STEP);
 

@@ -408,7 +408,7 @@ body.side-collapsed .library .sbar-y { display: none; }
 .lyr-v-side .lyrics-msg { font-size: 16px; }
 
 /* Lyrics in the sidebar: over the same blurred artwork as the full-screen player. */
-#right.lyrics-mode .fp-bg-art { filter: blur(90px) saturate(1.6) brightness(.62); }
+#right.lyrics-mode .fp-bg-art { --fp-tone: saturate(1.6) brightness(.62); }
 .lyr-views { display: flex; gap: 2px; margin-left: auto; flex: none; }
 .lyr-views .icon-btn { width: 36px; height: 36px; color: rgba(255, 255, 255, .75); }
 .lyr-views .icon-btn:hover { color: #fff; background: rgba(255, 255, 255, .14); }
@@ -584,7 +584,7 @@ button.dev:hover { background: var(--hover-2); }
 .fp-bg { position: absolute; inset: 0; z-index: -1; overflow: hidden; background: var(--fp-color, #3b3440); }
 .fp-bg-art {
   position: absolute; left: 50%; top: 50%; width: 150vmax; height: 150vmax; margin: -75vmax 0 0 -75vmax;
-  background: center / cover no-repeat; filter: blur(100px) saturate(1.7) brightness(.8);
+  --fp-tone: saturate(1.7) brightness(.8); /* applied while drawing the pre-blurred canvas (util.js backdrop) */
   opacity: 0; transition: opacity 1.2s ease; animation: fp-drift 90s linear infinite; will-change: transform;
 }
 .fp-bg-art.on { opacity: 1; }
@@ -629,14 +629,17 @@ body.doc-fullscreen .i-fsx { display: block; }
   grid-template-columns: var(--col); justify-content: center; align-content: center;
   grid-template-areas: "art" "meta" "progress" "controls" "bottom";
 }
-.fp-art-wrap { grid-area: art; view-transition-name: fp-art; aspect-ratio: 1; width: var(--art); justify-self: center; }
+.fp-art-wrap { position: relative; grid-area: art; view-transition-name: fp-art; aspect-ratio: 1; width: var(--art); justify-self: center; }
 .fp-art {
   width: 100%; height: 100%; object-fit: cover; border-radius: 12px; box-shadow: 0 28px 80px rgba(0, 0, 0, .5);
   transition: transform .6s cubic-bezier(.3, 1.4, .5, 1);
 }
 body:not(.is-playing) .fp-art { transform: scale(.9); }
 .fp-meta { grid-area: meta; view-transition-name: fp-meta; display: flex; align-items: center; gap: 12px; min-width: 0; }
-.fp-text { flex: 1; min-width: 0; }
+.fp-text { position: relative; flex: 1; min-width: 0; }
+/* Song change: copies of the outgoing artwork and text, laid over the new ones and faded out (player.js beginSongChange). */
+.fp-ghost { position: absolute; top: 0; left: 0; width: 100%; pointer-events: none; }
+img.fp-ghost { height: 100%; }
 .fp-text .np-title { font-size: clamp(20px, 2vw, 28px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; }
 .fp-text .np-artist { font-size: clamp(15px, 1.3vw, 18px); color: rgba(255, 255, 255, .78); margin-top: 2px; }
 .fp-album { font-size: 14px; color: rgba(255, 255, 255, .55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
@@ -960,6 +963,21 @@ body.q-drag-cursor, body.q-drag-cursor * { cursor: grabbing !important; user-sel
 .set-step input { width: 72px; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .12); background: var(--hover); color: var(--text); font: inherit; font-weight: 700; text-align: center; }
 .set-step input:focus { outline: none; border-color: var(--accent); }
 .settings .dlg-foot { justify-content: space-between; }
+/* Updates: an on/off switch, what's happening, and Check now / Restart now. */
+.set-switch { display: flex; align-items: center; gap: 12px; min-height: 40px; cursor: pointer; font-weight: 600; }
+.set-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.set-switch .sw { position: relative; flex: none; width: 40px; height: 24px; border-radius: 999px; background: #4a4950; transition: background-color .15s; }
+.set-switch .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.set-switch input:checked + .sw { background: var(--accent); }
+.set-switch input:checked + .sw::after { transform: translateX(16px); }
+.set-switch input:focus-visible + .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
+.set-switch:has(input:disabled) { cursor: default; opacity: .55; }
+.set-updates .set-hint { margin: 4px 0 8px; }
+.set-status { font-size: 13px; color: var(--text); margin-bottom: 10px; }
+.set-actions { display: flex; gap: 8px; }
+.set-actions .btn.small.primary { background: var(--accent); color: var(--accent-ink); }
+#nav .update-ready { color: var(--accent); }
+#nav .update-ready:hover { color: var(--accent-2); }
 .dlg-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 14px 0; }
 .dlg-title { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
 .dlg-text { color: var(--muted); margin: 10px 0 0; line-height: 1.5; }

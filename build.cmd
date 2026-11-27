@@ -57,12 +57,12 @@ echo Done. Start Orchard with:  build\orchard.exe
 
 :done
 endlocal
-echo %CMDCMDLINE% | find /i "%~nx0" >nul && pause
+if not defined CI echo %CMDCMDLINE% | find /i "%~nx0" >nul && pause
 exit /b 0
 
 :fail
 echo.
 echo Build failed.
 endlocal
-echo %CMDCMDLINE% | find /i "%~nx0" >nul && pause
+if not defined CI echo %CMDCMDLINE% | find /i "%~nx0" >nul && pause
 exit /b 1

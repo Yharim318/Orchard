@@ -310,6 +310,23 @@ running PowerShell `Get-Content -Wait`.
 
 ---
 
+## `Updater.java`: automatic updates
+
+**Responsibility:** keeps a release-built `orchard.exe` in step with the newest GitHub release of `Updater.REPO`
+(see "Releases and automatic updates" in [6-build-and-config.md](6-build-and-config.md)). Windows exe only; on a
+JVM or another OS `status()` reports `supported: false`.
+
+| Member | What it does |
+|--------|--------------|
+| `start()` | Schedules the first check (30 s), a check every 6 h, cleanup of `orchard.old.exe`, and the idle-restart watch (every minute). |
+| `status()` | `GET /api/update`: `supported, enabled, blocked, dev, current, latest, ready, status, message, checkedAt`. `status` is `idle/off/checking/downloading/current/ready/error/unsupported`. |
+| `setEnabled(on)` | `POST /api/update {enabled}`; saved in `<data>/auto-update`. |
+| `checkNow()` | `POST /api/update {action:'check'}`; checks and installs even when automatic updates are off. |
+| `restartNow()` | `POST /api/update {action:'restart'}`: starts the new exe with `--wait-for <pid>` and exits. |
+| `waitForExit(pid)` | Called by `Main` for `--wait-for`, before anything takes the port or the browser profile. |
+
+---
+
 ## `Log.java`: console logging
 
 `Log.info`, `Log.warn`, `Log.debug` print `HH:mm:ss LEVEL message`. Debug lines only appear with `--debug`

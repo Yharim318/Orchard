@@ -123,8 +123,38 @@ to generate the needed config.
 |------|---------|
 | `README.md` | User-facing overview: what Orchard is, how it works (short), requirements, build, run, options, security notes, limitations. Keep it in sync when behaviour changes. |
 | `.gitignore` | Ignores `build/` and `*.log`. |
+| `.github/workflows/release.yml` | Builds `orchard.exe` on a Windows runner and publishes it as a GitHub release (see below). |
 | `docs/` | This documentation. |
 
 ## Version number
 
-`Orchard.VERSION` in `Orchard.java`. Shown in the banner and `/api/info`.
+`Orchard.VERSION` in `Orchard.java`. Shown in the banner, `/api/info`, `orchard --version` and Settings > Updates.
+The release workflow overwrites it (in its own checkout only) with the release's version, and sets
+`Orchard.RELEASE_BUILD = true`. Builds made with `build.cmd` keep `RELEASE_BUILD = false`.
+
+## Releases and automatic updates
+
+Publishing a release is what updates every Orchard:
+
+1. Push the code to GitHub.
+2. Either open **Actions > Release > Run workflow** and type a version higher than the last one (e.g. `0.2.0`), or
+   push a tag: `git tag v0.2.0 && git push origin v0.2.0`.
+3. The workflow (`.github/workflows/release.yml`, `windows-latest` + GraalVM 21) stamps the version, runs
+   `build.cmd`, checks that `orchard.exe --version` prints it, and publishes release `v0.2.0` with `orchard.exe`
+   attached.
+
+Each running release build (`Updater.java`) asks GitHub for the latest release 30 s after starting and then every
+6 hours. A newer one is downloaded next to the running exe, checked (size, GitHub's SHA-256, a test run of
+`--version`) and swapped in (`orchard.exe` → `orchard.old.exe`, which the next start deletes). The new version
+runs from the next start; the app shows **Restart to update**, and restarts by itself after 30 minutes with
+nothing playing. A restart closes the browser gracefully first (the new process waits via `--wait-for <pid>`), so
+the Apple Music sign-in is kept.
+
+- Settings > Updates switches automatic updates on or off (saved in `<data>/auto-update`); "Check now" works
+  either way.
+- `build.cmd` builds never update on their own, so a local build isn't replaced behind your back. "Check now"
+  replaces one with the latest release.
+- `--no-update` or `ORCHARD_NO_UPDATE` turns updates off for one run.
+- The exe must be in a folder Orchard can write to (not `Program Files`).
+- `<data>/update-installed` remembers the last release file installed, so a release whose exe reports an older
+  version can't cause an endless update loop.

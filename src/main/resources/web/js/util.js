@@ -35,21 +35,39 @@ export function art(artwork, size = 300) {
 }
 
 /** Markup for a blurred-artwork backdrop (full-screen player, lyrics page and sidebar); drive it with backdrop(). */
-export const BACKDROP = '<div class="fp-bg"><div class="fp-bg-art"></div><div class="fp-bg-art"></div></div>';
+export const BACKDROP = '<div class="fp-bg"><canvas class="fp-bg-art" width="64" height="64"></canvas><canvas class="fp-bg-art" width="64" height="64"></canvas></div>';
 
-/** Returns update(item) for a BACKDROP element: the artwork, heavily blurred, cross-faded on track change. */
+/**
+ * Returns update(item) for a BACKDROP element: the artwork, heavily blurred, cross-faded on track change.
+ * The blur is drawn once into a tiny canvas that CSS stretches over the screen. A CSS blur on the huge, slowly
+ * turning layer instead had to be recomputed for every frame, which at full-screen size can starve the page of
+ * frames (song changes in the full-screen player showed up late).
+ */
 export function backdrop(bg) {
   let shown;
   const [a, b] = bg.querySelectorAll('.fp-bg-art');
   return (item) => {
     bg.style.setProperty('--fp-color', item && item.bgColor ? `#${item.bgColor}` : '');
-    const url = item && item.artwork ? art(item.artwork, 200) : null;
+    const url = item && item.artwork ? art(item.artwork, 120) : null; // the size the player bar already loaded
     if (url === shown) return;
     shown = url;
     const next = a.classList.contains('on') ? b : a;
     (next === a ? b : a).classList.remove('on');
-    next.style.backgroundImage = url ? `url("${url}")` : '';
-    next.classList.toggle('on', !!url);
+    next.classList.remove('on');
+    if (!url) return;
+    const img = new Image();
+    img.onload = () => {
+      if (shown !== url) return; // the song changed again meanwhile
+      const ctx = next.getContext('2d');
+      const n = next.width;
+      // Tone (e.g. "saturate(1.7) brightness(.8)") comes from CSS so each place can set its own.
+      const tone = getComputedStyle(next).getPropertyValue('--fp-tone').trim();
+      ctx.clearRect(0, 0, n, n);
+      ctx.filter = `blur(${n / 28}px) ${tone}`;
+      ctx.drawImage(img, -n / 8, -n / 8, n * 1.25, n * 1.25); // overdraw so the blur doesn't fade the edges
+      next.classList.add('on');
+    };
+    img.src = url;
   };
 }
 
@@ -159,6 +177,7 @@ const P = {
   album: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-12.5c-2.49 0-4.5 2.01-4.5 4.5s2.01 4.5 4.5 4.5 4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zm0 5.5c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z',
   close: 'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
   check: 'M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z',
+  update: 'M21 10.12h-6.78l2.74-2.82c-2.73-2.7-7.15-2.8-9.88-.1-2.73 2.71-2.73 7.08 0 9.79s7.15 2.71 9.88 0C18.32 15.65 19 14.08 19 12.1h2c0 1.98-.88 4.55-2.64 6.29-3.51 3.48-9.21 3.48-12.72 0-3.5-3.47-3.53-9.11-.02-12.58s9.14-3.47 12.65 0L21 3v7.12zM12.5 8v4.25l3.5 2.08-.72 1.21L11 13V8h1.5z',
   up: 'M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z',
   fullscreen: 'M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z',
   fullscreenExit: 'M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z',
