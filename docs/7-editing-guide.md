@@ -49,8 +49,9 @@ are in use while it runs), or run a second copy with `--port 8790 --data <other 
 ### Use another Apple Music API endpoint
 
 Only UI code: `const r = await am('/v1/…')` (GET) or `await amWrite('POST', '/v1/…', body)`. The path must
-start with `/v1/`. Catalog GETs are cached (10 min in Java, page lifetime in the UI). Pass
-`{ fresh: true }` to `am()` to skip the page cache. Apple's API reference is at
+start with `/v1/`. Every GET is cached in the UI (memory + IndexedDB, shown at once and refreshed in the
+background; a changed answer fires `data-updated`), and catalog GETs are also cached for 10 min in Java. Library
+reads after an `amWrite` go to Apple first. Pass `{ fresh: true }` to `am()` to skip the cache. Apple's API reference is at
 <https://developer.apple.com/documentation/applemusicapi>.
 
 ### Add a Java API endpoint

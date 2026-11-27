@@ -1,6 +1,6 @@
 // Page views: home, search, album, playlist, artist, library, songs, queue, lyrics.
 import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast, hexColor } from './util.js';
-import { S, am, sf, subscribe, queuePage } from './store.js';
+import { S, am, sf, subscribe, queuePage, browsable } from './store.js';
 import {
   toTrack, toCard, cardHtml, shelf, grid, trackRows, registerList, getList, markPlaying, loading, errorBox,
   libraryList, playList, playQueue, addToLibrary, openMenu, collectionMenuItems, favoritesPlaylist, moveInQueue,
@@ -703,7 +703,7 @@ async function library(el, m) {
   });
   input.addEventListener('input', debounce(() => { libQuery = input.value; draw(); }, 120));
 
-  if (!S.state.ready || !S.state.authorized) {
+  if (!browsable()) {
     body.innerHTML = `<div class="empty"><h3>Sign in to see your library</h3><p>Your playlists, albums and artists from Apple Music show up here.</p></div>`;
     return;
   }

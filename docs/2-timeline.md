@@ -183,6 +183,10 @@ Inside **`Main.startEngine`**:
     overlay, app) re-render.
 
 At this point the engine isn't ready yet, so **`player.js` → `updateOverlay`** shows "Starting Apple Music…".
+If the last session was signed in (`localStorage orchard.signedIn`, see `store.browsable()`/`warmStart()`), that
+notice is only a small pill (`#overlay.pill`). The sidebar and the current page draw straight from the API cache,
+and anything not cached waits until Apple Music is ready (`/api/am` answers 503 until then, and `store.fetchFresh`
+waits and retries).
 
 ## Stage 5: Apple's player loads inside the UI
 
@@ -272,7 +276,10 @@ Example: the Home page.
 1. `route()` (`app.js`) matches `#/` against the `routes` table in `views.js` → **`home(el)`**.
 2. `home` calls `am('/v1/me/recent/played?limit=10')`, `am('/v1/me/recommendations…')` and
    `am('/v1/catalog/us/charts…')` in parallel.
-3. **`store.am(path)`** → `GET /orchard/api/am?path=<encoded>` (catalog paths are also memoised in the page).
+3. **`store.am(path)`** answers from its cache when it has a copy (memory, then IndexedDB `orchard-cache`) and
+   checks again in the background (your library after 30 s or once per run, the catalog after 10 min). A changed
+   answer fires `data-updated`, and the page and sidebar redraw quietly. With no copy, or for library reads after
+   an `amWrite`, it requests `GET /orchard/api/am?path=<encoded>`.
 4. Intercepted → forwarded → **`WebServer.appleGet`**: validates the path (`/v1/…`, no `..`), checks the
    10-minute **catalog cache**, otherwise **`Engine.api("GET", path)`**.
 5. **`Engine.invoke("api", …)`** builds a JavaScript expression that finds
@@ -318,7 +325,8 @@ Player-bar buttons work the same way (`player.js control` → `cmd({type:'next'}
 1. On the computer, the Devices button (`player.js openDevices`) shows `pairingHtml()`: one tab per entry
    in `S.info.remotes` (Wi-Fi/LAN, Tailscale, Public IP) and a QR code drawn by `vendor/qrcode.js`.
 2. The phone opens e.g. `http://100.120.202.64:8787/`. **`WebServer.handle`**: the Host is an IP literal
-   (allowed), no Origin on a top-level page load → `staticFile` → `index.html` and the same JS files.
+   (allowed), no Origin on a top-level page load → `staticFile` → `index.html` and the same JS files. Each
+   carries an `ETag`, so on later visits the phone gets a bodyless 304 for every unchanged file.
 3. In the phone's browser `HOST_PROXY` is false and `ROOT` is `''`. `init()` fetches `/api/info`, then
    **`connect()`** opens `new EventSource('/api/events?deviceId=…&name=Android · Chrome&kind=phone')`.
 4. **`WebServer.events`** sends SSE headers, writes `retry: 2000`, and calls **`Hub.serve(new SseClient(…))`**,

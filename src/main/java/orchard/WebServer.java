@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -387,9 +388,24 @@ final class WebServer {
         }
         String ext = path.substring(path.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
         ex.getResponseHeaders().set("Content-Type", TYPES.getOrDefault(ext, "application/octet-stream"));
+        // Browsers keep the files and ask "still this version?" each time; an unchanged file is answered with a
+        // bodyless 304, so a phone on weak Wi-Fi doesn't download the whole app again on every start.
         ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        String etag = etag(bytes);
+        ex.getResponseHeaders().set("ETag", etag);
+        String ifNoneMatch = ex.getRequestHeaders().getFirst("If-None-Match");
+        if (ifNoneMatch != null && List.of(ifNoneMatch.split("\\s*,\\s*")).contains(etag)) {
+            ex.sendResponseHeaders(304, -1);
+            return;
+        }
         ex.sendResponseHeaders(200, bytes.length);
         ex.getResponseBody().write(bytes);
+    }
+
+    private static String etag(byte[] bytes) {
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        crc.update(bytes);
+        return "\"" + Long.toHexString(crc.getValue()) + "-" + Integer.toHexString(bytes.length) + "\"";
     }
 
     // ------------------------------------------------------------------ security

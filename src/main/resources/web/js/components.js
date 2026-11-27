@@ -349,6 +349,10 @@ export function libraryList(kind, fresh = false) {
   return p;
 }
 
+// Apple's answer for something cached changed (store.js): build the lists again from the updated pages.
+// (Registered before app.js redraws the sidebar on the same event: this module loads first.)
+document.addEventListener('data-updated', () => { for (const k of Object.keys(libCache)) delete libCache[k]; });
+
 export function invalidateLibrary(kind) {
   delete libCache[kind];
   document.dispatchEvent(new CustomEvent('library-changed', { detail: kind }));

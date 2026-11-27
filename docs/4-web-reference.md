@@ -55,7 +55,7 @@ Static containers that the scripts fill in:
 | `#tabs` | `app.js buildShell` | Phone bottom tab bar |
 | `#engine-host` (+ `.engine-bar`, `#engine-back`) | Java (`Engine.createFrame` adds the iframe) | Holds Apple's hidden player; becomes visible for sign-in/Ctrl+Shift+A |
 | `#fullplayer` | `player.js` | Full-screen Now Playing view (all screen sizes), with lyrics |
-| `#overlay` | `player.js updateOverlay` | "Starting…/Sign in" blocking card |
+| `#overlay` | `player.js updateOverlay` | "Starting…/Sign in" blocking card; `.pill` = small non-blocking notice during a warm start |
 | `#menu`, `#popover`, `#toast` | `components.openMenu`, `player.openDevices`, `util.toast` | Context menus, Devices panel, notifications |
 
 The `<head>` links `app.css`, `icon.svg`, `manifest.webmanifest` (relative paths) and sets mobile/PWA meta tags.
@@ -114,7 +114,8 @@ The single source of truth for the UI and the only module that talks to the serv
 | `sf()` | Storefront (`us`, …) for Apple API paths. |
 | `positionNow()` | Current playback position, interpolated. |
 | `deviceId()`, `deviceKind()`, `deviceName()` | Identity of this UI (persisted id; name like "Android · Chrome"; `localStorage['orchard.deviceName']` overrides). |
-| `am(path)` | GET an Apple Music API path (`/v1/…`) through Orchard. Catalog responses are memoised for the page's lifetime. |
+| `am(path, {fresh})` | GET an Apple Music API path (`/v1/…`) through Orchard. Stale-while-revalidate cache in memory + IndexedDB `orchard-cache`/`api` (library copies rechecked after 30 s and once per run, catalog after 10 min; changes fire the `data-updated` DOM event; library reads after `amWrite` go to the network first; 503 "still loading" waits and retries; signing out forgets library copies; copies unused for 60 days are dropped). |
+| `browsable()`, `warmStart()` | Whether pages/library can show (signed in, or signed in last time while Apple Music starts), and whether we're in that warm start. |
 | `amWrite(method, path, body)` | POST/PUT/DELETE to Apple through Orchard. |
 | `cmd(command)` | Send a player command to the **current speaker**; applies the returned state; toasts errors unless `{quiet:true}`. |
 | `post(path, body)` | POST to the current speaker (sign-in, sign-out, transfer…). |

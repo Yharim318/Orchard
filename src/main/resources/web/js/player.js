@@ -1,6 +1,6 @@
 // Player bar, mobile mini/full player, device picker ("Connect"), right panel and engine status overlay.
 import { $, esc, art, fmtTime, icon, EQ, throttle, toast, store as persist, BACKDROP, backdrop } from './util.js';
-import { S, cmd, post, subscribe, positionNow, displayPosition, patchState, selectSpeaker, isHostApp, HOST_PROXY, pairInvite } from './store.js';
+import { S, cmd, post, subscribe, positionNow, displayPosition, patchState, selectSpeaker, isHostApp, HOST_PROXY, pairInvite, warmStart } from './store.js';
 import { isLoved, toggleLoved, lovedCached, trackMenuItems, openMenu, markPlaying, artistLink, trackMenuHead } from './components.js';
 import { mountLyrics, lyricsViewButtons } from './lyrics.js';
 import { seekStep } from './keys.js';
@@ -870,8 +870,13 @@ function updateOverlay() {
   const el = $('#overlay');
   const s = S.state;
   let html = '';
+  let pill = false;
   if (!S.connected && !S.speaker) {
     html = `<div class="ov-card"><div class="spinner"></div><h2>Connecting…</h2></div>`;
+  } else if (warmStart()) {
+    // Signed in last time: browse from the cache meanwhile; just say that playback is on its way.
+    pill = true;
+    html = `<div class="ov-pill"><div class="spinner"></div>Starting Apple Music…</div>`;
   } else if (!s.ready) {
     html = `<div class="ov-card"><div class="spinner"${s.offline ? ' hidden' : ''}></div>
       <h2>${s.offline ? 'Playback unavailable' : 'Starting Apple Music…'}</h2>
@@ -885,6 +890,7 @@ function updateOverlay() {
       <button class="btn primary" data-a="signin">Sign in</button>${otherSpeakersHtml()}</div>`;
   }
   el.hidden = !html;
+  el.classList.toggle('pill', pill);
   if (html && el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
   if (!html) el.dataset.html = '';
 }

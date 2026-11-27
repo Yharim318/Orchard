@@ -132,26 +132,192 @@ async function http(url, opts = {}) {
   return data;
 }
 
-const memo = new Map();
+// ------------------------------------------------------------------ Apple Music API (cached)
+// Every successful GET is kept, in memory for this session and in IndexedDB ('orchard-cache') for the next one.
+// Pages then draw at once from the last copy: on a slow connection, while Apple Music is still starting, even
+// offline. A copy that's more than a moment old is fetched again in the background. If Apple's answer changed,
+// a 'data-updated' event makes the page and the sidebar redraw quietly. Reads of your library made after an edit
+// (amWrite) ask Apple first, so an edit never shows old data; the old copy is only a fallback then.
+// Errors are never kept. Signing out forgets your library's copies (catalog pages are the same for everyone).
 
-/** GET from the Apple Music API (through the Orchard server that served this page). */
-export function am(path, { fresh = false } = {}) {
-  const cacheable = path.startsWith('/v1/catalog/');
-  if (cacheable && !fresh && memo.has(path)) return memo.get(path);
-  const p = http(ROOT + '/api/am?path=' + encodeURIComponent(path));
-  if (cacheable) {
-    memo.set(path, p);
-    p.catch(() => memo.delete(path));
+const RECHECK_ME_MS = 30 * 1000;             // your library, recently played, ratings…
+const RECHECK_CATALOG_MS = 10 * 60 * 1000;   // Apple's catalog (the Orchard server keeps it this long too)
+const FORGET_MS = 60 * 24 * 3600 * 1000;     // copies not refreshed for 60 days are dropped
+const mem = new Map();       // path -> { at, text }
+const inflight = new Map();  // path -> { p: Promise<text>, started }
+let lastWriteAt = 0;
+const isMine = (path) => !path.startsWith('/v1/catalog/');
+
+let apiDbp = null;
+function apiDb() {
+  if (!apiDbp) {
+    apiDbp = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open('orchard-cache', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('api');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
   }
+  return apiDbp;
+}
+
+/** A saved copy, or null. Never waits long: slow storage must not make pages slower than the network. */
+async function diskGet(path) {
+  const d = await Promise.race([apiDb(), new Promise((r) => setTimeout(() => r(null), 400))]);
+  if (!d) return null;
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), 400);
+    try {
+      const req = d.transaction('api', 'readonly').objectStore('api').get(path);
+      req.onsuccess = () => { clearTimeout(t); const v = req.result; resolve(v && typeof v.text === 'string' ? v : null); };
+      req.onerror = () => { clearTimeout(t); resolve(null); };
+    } catch (e) { clearTimeout(t); resolve(null); }
+  });
+}
+
+async function diskWrite(fn) {
+  const d = await apiDb();
+  if (!d) return;
+  try { fn(d.transaction('api', 'readwrite').objectStore('api')); } catch (e) { /* quota or closed */ }
+}
+
+/** Drops copies matching `drop(path, entry)` from memory and disk. */
+function forget(drop) {
+  for (const [p, v] of mem) if (drop(p, v)) mem.delete(p);
+  diskWrite((st) => {
+    const req = st.openCursor();
+    req.onsuccess = () => {
+      const c = req.result;
+      if (!c) return;
+      if (drop(c.key, c.value || {})) c.delete();
+      c.continue();
+    };
+  });
+}
+
+// Old copies go once per start, a little after startup so they don't compete with the first page.
+setTimeout(() => forget((p, v) => !(v.at > Date.now() - FORGET_MS)), 20000);
+
+/** Resolves when the speaker reports Apple Music ready, or after `ms`. */
+function readyOrAfter(ms) {
+  return new Promise((resolve) => {
+    let un = () => {};
+    const done = () => { clearTimeout(t); un(); resolve(); };
+    const t = setTimeout(done, ms);
+    un = subscribe((kind) => { if (kind === 'state' && S.state.ready) done(); });
+  });
+}
+
+/**
+ * Fetches from Apple and keeps the answer. Waits while Apple Music starts. Joins a request for the same path
+ * that's already on its way, unless that one started before `notBefore`. A copy is dated by when its request
+ * started, so an answer that may predate an edit never counts as newer than the edit.
+ */
+function fetchFresh(path, notBefore = 0) {
+  const running = inflight.get(path);
+  if (running && running.started >= notBefore) return running.p;
+  const started = Date.now();
+  const p = (async () => {
+    for (let wait = 1000; ; wait = Math.min(wait * 2, 10000)) {
+      try {
+        const data = await http(ROOT + '/api/am?path=' + encodeURIComponent(path));
+        const entry = { at: started, text: JSON.stringify(data) };
+        if (isMine(path) && signedOut()) return entry.text; // don't keep anything while signed out
+        const cur = mem.get(path);
+        if (!cur || !(cur.at > started)) { // a newer request may have answered first: keep the newest
+          mem.set(path, entry);
+          diskWrite((st) => st.put(entry, path));
+        }
+        return entry.text;
+      } catch (e) {
+        if (e.status === 404) forget((p2) => p2 === path); // gone (e.g. an emptied playlist): drop the copy
+        // 503 = Apple Music is still starting: wait for it instead of failing the page.
+        if (e.status !== 503 || S.state.offline) throw e;
+        await readyOrAfter(wait);
+      }
+    }
+  })();
+  const own = { p, started };
+  inflight.set(path, own);
+  const done = () => { if (inflight.get(path) === own) inflight.delete(path); };
+  p.then(done, done);
   return p;
 }
 
-export function amWrite(method, path, body) {
-  return http(ROOT + '/api/am', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ method, path, body }),
-  });
+let updatedTimer = 0;
+function recheck(path, oldText) {
+  if (inflight.has(path)) return;
+  const changed = () => {
+    clearTimeout(updatedTimer);
+    updatedTimer = setTimeout(() => document.dispatchEvent(new CustomEvent('data-updated')), 300);
+  };
+  fetchFresh(path).then((text) => { if (text !== oldText) changed(); }, (e) => { if (e.status === 404) changed(); });
+}
+
+/** GET from the Apple Music API (through the Orchard server that served this page). `fresh` skips the cache. */
+export async function am(path, { fresh = false } = {}) {
+  const mine = isMine(path);
+  let hit = fresh || (mine && signedOut()) ? null : mem.get(path);
+  if (!hit && !fresh && !(mine && signedOut())) {
+    hit = await diskGet(path);
+    if (hit) hit.disk = true; // from an earlier run: your library is checked again once in this one
+  }
+  if (!hit) return JSON.parse(await fetchFresh(path));
+  mem.set(path, hit);
+  if (mine && hit.at < lastWriteAt) {
+    // Changed here since this copy was made: ask Apple first; the copy is only for when Apple can't be reached.
+    try {
+      return JSON.parse(await fetchFresh(path, lastWriteAt));
+    } catch (e) {
+      if (e.status && e.status < 500) throw e;
+      return JSON.parse(hit.text);
+    }
+  }
+  if ((mine && hit.disk) || Date.now() - hit.at > (mine ? RECHECK_ME_MS : RECHECK_CATALOG_MS)) {
+    hit.disk = false;
+    recheck(path, hit.text);
+  }
+  return JSON.parse(hit.text); // a new object each time: pages may change what they're given
+}
+
+export async function amWrite(method, path, body) {
+  lastWriteAt = Date.now();
+  try {
+    return await http(ROOT + '/api/am', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, path, body }),
+    });
+  } finally {
+    lastWriteAt = Date.now(); // reads that started during the write may have kept the old answer
+  }
+}
+
+// ------------------------------------------------------------------ signed in (for browsing while Apple Music starts)
+
+const SIGNED_IN_KEY = 'orchard.signedIn';
+let wasSignedIn = persist(SIGNED_IN_KEY) === true;
+const signedOut = () => !!(S.state.ready && !S.state.authorized);
+
+/**
+ * Whether the library and pages can be shown: signed in, or (while Apple Music is still starting) signed in
+ * last time, in which case pages draw from the cache and anything not cached waits for Apple Music.
+ */
+export const browsable = () => (S.state.ready ? !!S.state.authorized : wasSignedIn);
+
+/** Apple Music is still starting, but the last session was signed in: the UI is usable from the cache. */
+export const warmStart = () => !S.state.ready && wasSignedIn && !S.state.offline;
+
+let forgotMine = false;
+function noteSignIn() {
+  if (!S.state.ready) return;
+  const now = !!S.state.authorized;
+  if (now !== wasSignedIn) { wasSignedIn = now; persist(SIGNED_IN_KEY, now); }
+  if (now) forgotMine = false;
+  else if (!forgotMine) { forgotMine = true; forget((p) => isMine(p)); }
 }
 
 /** Sends a player command to the active speaker. */
@@ -279,6 +445,7 @@ function setState(s) {
   S.state = s;
   if (!s.queue && prevQueue) S.state.queue = prevQueue;
   S.stateAt = performance.now();
+  noteSignIn();
   notify('state');
 }
 

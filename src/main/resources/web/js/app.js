@@ -1,6 +1,6 @@
 // App shell: routing, sidebar library, global click handling and keyboard shortcuts.
 import { $, esc, icon, toast, store as persist } from './util.js';
-import { S, init, subscribe, toggleConsole, HOST_PROXY } from './store.js';
+import { S, init, subscribe, toggleConsole, HOST_PROXY, browsable } from './store.js';
 import {
   getList, playList, playQueue, openMenu, closeMenu, trackMenuItems, collectionMenuItems, libraryList,
   markPlaying, loading, toggleLoved, queueIndexOf, trackMenuHead,
@@ -96,7 +96,7 @@ async function renderSidebarLibrary({ retry = false } = {}) {
   const list = $('#lib-list');
   const songsLink = `<a class="lib-item songs-link" href="#/favorites" title="Favorite Songs"><span class="songs-ic">${icon('heart')}</span><div><div class="t">Favorite Songs</div><div class="s">Synced with Apple Music</div></div></a>
     <a class="lib-item songs-link" href="#/songs" title="Songs"><span class="songs-ic all">${icon('library')}</span><div><div class="t">Songs</div><div class="s">Everything in your library</div></div></a>`;
-  if (!S.state.ready || !S.state.authorized) {
+  if (!browsable()) {
     list.innerHTML = '<p class="dev-note">Sign in to see your library.</p>';
     return;
   }
@@ -138,6 +138,8 @@ function bindSidebar() {
   });
   // Something on the current page changed: redraw it quietly where you were.
   document.addEventListener('view-refresh', () => softRefresh());
+  // Apple's answer to something already shown changed since it was cached (store.js): redraw quietly.
+  document.addEventListener('data-updated', () => { renderSidebarLibrary(); softRefresh(); });
   // A playlist changed. Its own page updates itself in place; other pages showing it redraw quietly.
   document.addEventListener('playlist-changed', (e) => {
     const c = e.detail || {};
@@ -355,9 +357,10 @@ async function boot() {
   bindKeys();
   initMosaics();
   window.addEventListener('hashchange', route);
-  let wasReady = false;
+  // Pages draw once you're signed in, or straight away from the cache when you were signed in last time.
+  let wasReady = browsable();
   subscribe((kind) => {
-    const ready = !!(S.state.ready && S.state.authorized);
+    const ready = browsable();
     if (kind === 'state' && ready !== wasReady) {
       wasReady = ready;
       renderSidebarLibrary();
