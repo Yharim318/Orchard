@@ -1,10 +1,10 @@
 // App shell: routing, sidebar library, global click handling and keyboard shortcuts.
-import { $, esc, icon, toast, store as persist } from './util.js';
+import { $, esc, icon, toast, debounce, store as persist, keepPictures, setHtml, pictureKey } from './util.js';
 import { S, init, subscribe, toggleConsole, HOST_PROXY, browsable } from './store.js';
 import { initWarmup } from './warmup.js';
 import {
   getList, playList, playQueue, openMenu, closeMenu, trackMenuItems, collectionMenuItems, libraryList,
-  markPlaying, loading, toggleLoved, queueIndexOf, trackMenuHead,
+  markPlaying, loading, toggleLoved, queueIndexOf, trackMenuHead, favoritesPlaylist, libraryCount,
 } from './components.js';
 import { routes, libraryRow } from './views.js';
 import { initPlayer, closeDevices, toggleEngine, hasEngineFrame, playerAction } from './player.js';
@@ -83,55 +83,148 @@ function shortcutHints() {
 
 // ------------------------------------------------------------------ sidebar library
 
-let libKind = persist('orchard.libKind') || 'playlists';
+// ------------------------------------------------------------------ sidebar library
+// Like the Library page, in compact form: tabs with counts (Playlists / Albums / Artists), a search box and a sort
+// (remembered per tab), Favorite Songs and Songs pinned on top of Playlists (hidden while searching), and the playlist or
+// album that's playing marked with the accent colour and an equalizer.
+const SIDE_KINDS = { playlists: 'Playlists', albums: 'Albums', artists: 'Artists' };
+const SIDE_SORTS = {
+  playlists: { recent: 'Recent', alpha: 'A–Z', creator: 'Creator' },
+  albums: { recent: 'Recent', alpha: 'A–Z', creator: 'Artist' },
+  artists: { recent: 'Recent', alpha: 'A–Z' },
+};
+let libKind = SIDE_KINDS[persist('orchard.libKind')] ? persist('orchard.libKind') : 'playlists';
+let sideQuery = '';
+let sideItems = null;   // the current tab's items (Apple's library resources), null until loaded
+const sideCounts = {};  // kind -> shown count text (kept, so redraws don't blink)
+const sideNum = new Intl.NumberFormat();
 // A failed load tries again by itself, waiting longer each time (Apple Music can still be starting up).
 let libRetry = 0;
 let libRetryDelay = 0;
 
+const sideSort = () => {
+  const s = persist(`orchard.sideSort.${libKind}`);
+  return SIDE_SORTS[libKind][s] ? s : 'recent';
+};
+
+// Favorite Songs and Songs are pinned on the Playlists tab only (they're song lists, not albums or artists).
+const SONGS_LINKS = () => (libKind !== 'playlists' ? '' : `<a class="lib-item songs-link" href="#/favorites" title="Favorite Songs"><span class="songs-ic">${icon('heart')}</span><div><div class="t">Favorite Songs</div><div class="s">Synced with Apple Music</div></div></a>
+    <a class="lib-item songs-link" href="#/library/songs" title="Songs"><span class="songs-ic all">${icon('library')}</span><div><div class="t">Songs</div><div class="s">Everything in your library</div></div></a>`);
+
+function renderSideTabs() {
+  $('#lib-chips').innerHTML = Object.entries(SIDE_KINDS).map(([k, label]) =>
+    `<button class="side-tab${k === libKind ? ' on' : ''}" data-k="${k}"${k === libKind ? ' aria-current="true"' : ''}>${label}<span class="side-count" data-count="${k}">${sideCounts[k] || ''}</span></button>`).join('');
+  for (const k of Object.keys(SIDE_KINDS)) {
+    libraryCount(k).then((n) => {
+      if (n == null) return;
+      sideCounts[k] = typeof n === 'number' ? sideNum.format(n) : n;
+      const span = $(`#lib-chips [data-count="${k}"]`);
+      if (span) span.textContent = sideCounts[k];
+    }).catch(() => {});
+  }
+  const input = $('#side-tools input');
+  if (input) {
+    input.placeholder = `Find in ${SIDE_KINDS[libKind].toLowerCase()}`;
+    input.setAttribute('aria-label', input.placeholder);
+  }
+  const sortLabel = $('#side-sort span');
+  if (sortLabel) sortLabel.textContent = SIDE_SORTS[libKind][sideSort()];
+}
+
+/** Draws the current tab's list from sideItems: filtered, sorted, pinned shortcuts first. */
+function drawSideList() {
+  const list = $('#lib-list');
+  if (!sideItems) return;
+  const q = sideQuery.trim().toLowerCase();
+  const sort = sideSort();
+  const info = (r, i) => {
+    const a = r.attributes || {};
+    return { r, i, title: a.name || '', creator: a.artistName || a.curatorName || '', added: a.dateAdded ? Date.parse(a.dateAdded) : 0 };
+  };
+  const text = (x, y) => (x || '￿').localeCompare(y || '￿', undefined, { sensitivity: 'base', numeric: true });
+  const cmp = {
+    recent: (x, y) => (y.added - x.added),
+    alpha: (x, y) => text(x.title, y.title),
+    creator: (x, y) => text(x.creator, y.creator) || text(x.title, y.title),
+  }[sort];
+  const items = sideItems.map(info)
+    .filter((x) => !q || x.title.toLowerCase().includes(q) || x.creator.toLowerCase().includes(q))
+    .sort((x, y) => cmp(x, y) || x.i - y.i);
+  const rows = items.length ? items.map((x) => libraryRow(x.r)).join('')
+    : q ? `<p class="dev-note">Nothing in your ${libKind} matches “${esc(sideQuery.trim())}”.</p>` : `<p class="dev-note">No ${libKind} yet.</p>`;
+  const html = (q ? '' : SONGS_LINKS()) + rows;
+  if (list.dataset.html !== html) {
+    setHtml(list, html); // keeps the thumbnails already shown
+    list.dataset.html = html;
+  }
+  markSidePlaying();
+  highlightNav();
+}
+
+/** Marks the sidebar item the current song was queued from (Apple's player reports it as item.container). */
+function markSidePlaying() {
+  const c = S.state.item && S.state.item.container;
+  const id = c && c.id ? String(c.id) : '';
+  document.querySelectorAll('#lib-list .lib-item[data-ids]').forEach((a) => {
+    a.classList.toggle('playing', !!id && a.dataset.ids.split(' ').includes(id));
+  });
+}
+
 async function renderSidebarLibrary({ retry = false } = {}) {
   clearTimeout(libRetry);
   if (!retry) libRetryDelay = 0;
-  const chips = $('#lib-chips');
-  chips.innerHTML = ['playlists', 'albums', 'artists'].map((k) =>
-    `<button class="chip${k === libKind ? ' on' : ''}" data-k="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('');
+  renderSideTabs();
   const list = $('#lib-list');
-  const songsLink = `<a class="lib-item songs-link" href="#/favorites" title="Favorite Songs"><span class="songs-ic">${icon('heart')}</span><div><div class="t">Favorite Songs</div><div class="s">Synced with Apple Music</div></div></a>
-    <a class="lib-item songs-link" href="#/songs" title="Songs"><span class="songs-ic all">${icon('library')}</span><div><div class="t">Songs</div><div class="s">Everything in your library</div></div></a>`;
   if (!browsable()) {
+    sideItems = null;
     list.innerHTML = '<p class="dev-note">Sign in to see your library.</p>';
+    list.dataset.html = '';
     return;
   }
   // Show the loading dots only when switching lists; a refresh of the same list swaps in quietly.
   const shown = list.dataset.kind === libKind && list.querySelector('.lib-item:not(.songs-link)');
-  if (!shown && !retry) list.innerHTML = songsLink + loading(); // a retry keeps the error up until it works
+  if (!shown && !retry) { list.innerHTML = SONGS_LINKS() + loading(); list.dataset.html = ''; } // a retry keeps the error up
   list.dataset.kind = libKind;
   const kind = libKind;
   try {
     const items = await libraryList(kind);
     if (kind !== libKind) return; // switched lists meanwhile
-    const html = songsLink + (items.length ? items.map(libraryRow).join('') : `<p class="dev-note">No ${kind} yet.</p>`);
-    if (list.dataset.html !== html) {
-      list.innerHTML = html;
-      list.dataset.html = html;
-    }
-    highlightNav();
+    sideItems = items;
+    drawSideList();
     libRetryDelay = 0;
   } catch (e) {
     if (kind !== libKind) return;
-    if (!shown) list.innerHTML = songsLink + `<p class="dev-note">Couldn't load your library (${esc(e.message)}). Trying again…</p>`;
+    if (!shown) { list.innerHTML = SONGS_LINKS() + `<p class="dev-note">Couldn't load your library (${esc(e.message)}). Trying again…</p>`; list.dataset.html = ''; }
     libRetryDelay = Math.min(libRetryDelay ? libRetryDelay * 2 : 1000, 30000);
     libRetry = setTimeout(() => renderSidebarLibrary({ retry: true }), libRetryDelay);
   }
 }
 
 function bindSidebar() {
+  $('#side-tools').innerHTML = `<label class="side-find">${icon('search')}<input type="search" placeholder="Find in playlists"></label>
+    <button class="side-sort" id="side-sort" title="Sort">${icon('sort')}<span>Recent</span></button>`;
   $('#lib-chips').addEventListener('click', (e) => {
     const b = e.target.closest('[data-k]');
-    if (!b) return;
+    if (!b || b.dataset.k === libKind) return;
     libKind = b.dataset.k;
+    sideItems = null;
     persist('orchard.libKind', libKind);
     renderSidebarLibrary();
   });
+  const find = $('#side-tools input');
+  find.addEventListener('input', debounce(() => { sideQuery = find.value; drawSideList(); }, 100));
+  find.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && find.value) { e.stopPropagation(); find.value = ''; sideQuery = ''; drawSideList(); }
+  });
+  $('#side-sort').addEventListener('click', (e) => {
+    const sorts = SIDE_SORTS[libKind];
+    const cur = sideSort();
+    openMenu(e.currentTarget, Object.keys(sorts).map((k) => ({
+      label: { recent: 'Recently added', alpha: 'Alphabetical', creator: sorts.creator }[k], icon: k === cur ? 'check' : undefined,
+      run: () => { persist(`orchard.sideSort.${libKind}`, k); renderSideTabs(); drawSideList(); },
+    })), 'Sort by');
+  });
+  subscribe((kind) => { if (kind === 'state') markSidePlaying(); });
   $('#new-playlist').addEventListener('click', () => openPlaylistEditor());
   document.addEventListener('library-changed', () => {
     renderSidebarLibrary();
@@ -141,6 +234,16 @@ function bindSidebar() {
   document.addEventListener('view-refresh', () => softRefresh());
   // Apple's answer to something already shown changed since it was cached (store.js): redraw quietly.
   document.addEventListener('data-updated', () => { renderSidebarLibrary(); softRefresh(); });
+  // A song was favorited elsewhere: only the Favorite Songs playlist's page has more to show than the hearts.
+  document.addEventListener('favorites-changed', async () => {
+    const hash = location.hash || '';
+    if (hash === '#/favorites') { softRefresh(); return; }
+    if (!hash.startsWith('#/playlist/')) return;
+    try {
+      const fav = await favoritesPlaylist();
+      if (fav && hash === `#/playlist/${encodeURIComponent(fav.id)}`) softRefresh();
+    } catch (e) { /* not known yet: nothing to refresh */ }
+  });
   // A playlist changed. Its own page updates itself in place; other pages showing it redraw quietly.
   document.addEventListener('playlist-changed', (e) => {
     const c = e.detail || {};
@@ -175,11 +278,14 @@ function stage(next) {
  * Waits (at most `ms`) until the pictures that will be on screen when `next` is shown scrolled to `scrollTop`
  * are decoded. Lazy ones among them are asked to load now.
  */
-async function picturesReady(next, scrollTop, ms) {
+async function picturesReady(next, scrollTop, ms, current = null) {
   if (ms <= 0) return;
   const h = $('#main').clientHeight;
   const nr = next.getBoundingClientRect();
+  // Pictures the current page already shows are carried over (keepPictures): no need to wait for those.
+  const shown = new Set(current ? [...current.querySelectorAll('img')].map(pictureKey) : []);
   const imgs = [...next.querySelectorAll('img')].filter((img) => {
+    if (shown.has(pictureKey(img))) return false;
     const r = img.getBoundingClientRect();
     const y = r.top - nr.top;
     return r.width > 0 && y < scrollTop + h + 100 && y + r.height > scrollTop - 100
@@ -285,11 +391,12 @@ async function doSoftRefresh() {
   const stale = () => seq !== routeSeq || (location.hash || '#/') !== hash;
   // Not ready (still loading): keep what's shown.
   if (stale() || (next.querySelector('.loading') && !$('#view').querySelector('.loading'))) { runCleanup(c); box.remove(); return; }
-  await picturesReady(next, main.scrollTop, SOFT_WAIT_MS);
+  await picturesReady(next, main.scrollTop, SOFT_WAIT_MS, $('#view'));
   if (stale()) { runCleanup(c); box.remove(); return; }
   const top = main.scrollTop;
   runCleanup(cleanup);
   cleanup = typeof c === 'function' ? c : null;
+  keepPictures($('#view'), next); // the same pictures stay on screen as they are: no blinking
   showPage(next, top);
   markPlaying();
 }

@@ -59,6 +59,42 @@ export function art(artwork, size = 300) {
   return url ? viaCache(url) : PLACEHOLDER;
 }
 
+// ------------------------------------------------------------------ redraws without blinking pictures
+
+/** What a picture shows: its playlist mosaic, or its address. */
+export const pictureKey = (img) => (img.dataset.mosaic ? `m:${img.dataset.mosaic}` : img.getAttribute('src'));
+
+/**
+ * Before `fresh` replaces the content of `current`: each new <img> showing the same picture as one already in
+ * `current` is swapped for that existing element (moved over, taking the new one's attributes). Pictures that
+ * are already decoded stay on screen, instead of new elements blinking grey while they load again.
+ */
+export function keepPictures(current, fresh) {
+  const pool = new Map();
+  for (const img of current.querySelectorAll('img')) {
+    const k = pictureKey(img);
+    if (!k) continue;
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(img);
+  }
+  if (!pool.size) return;
+  for (const img of fresh.querySelectorAll('img')) {
+    const old = (pool.get(pictureKey(img)) || []).shift();
+    if (!old) continue;
+    for (const a of [...old.attributes]) if (a.name !== 'src' && !img.hasAttribute(a.name)) old.removeAttribute(a.name);
+    for (const a of [...img.attributes]) if (a.name !== 'src') old.setAttribute(a.name, a.value);
+    img.replaceWith(old);
+  }
+}
+
+/** el.innerHTML = html, keeping the pictures already shown (see keepPictures). */
+export function setHtml(el, html) {
+  const fresh = document.createElement('div'); // in this document: moved pictures keep their decoded image
+  fresh.innerHTML = html;
+  keepPictures(el, fresh);
+  el.replaceChildren(...fresh.childNodes);
+}
+
 /** A CSS colour from Apple's "bgColor" (hex digits), or '' if it is anything else. */
 export const hexColor = (c) => (typeof c === 'string' && /^[0-9a-f]{3,8}$/i.test(c) ? `#${c}` : '');
 

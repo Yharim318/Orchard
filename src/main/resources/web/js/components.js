@@ -97,6 +97,8 @@ export function registerList(tracks, ctx = {}) {
 }
 export const getList = (key) => lists.get(key);
 
+const QUEUE_WINDOW = 500;
+
 export async function playList(key, index, { shuffle = false } = {}) {
   const L = lists.get(key);
   if (!L) return;
@@ -104,9 +106,21 @@ export async function playList(key, index, { shuffle = false } = {}) {
     await cmd({ type: 'jump', index: L.ctx.queueOffset + index });
     return;
   }
-  const playable = L.tracks.filter((t) => t.playable);
+  let playable = L.tracks.filter((t) => t.playable);
   if (!playable.length) { toast('Nothing playable here'); return; }
-  const start = index == null ? undefined : L.tracks.slice(0, index).filter((t) => t.playable).length;
+  let start = index == null ? undefined : L.tracks.slice(0, index).filter((t) => t.playable).length;
+  // Very long lists (the whole library's songs): Apple's player takes a while to set up a queue of thousands, so
+  // it gets the next QUEUE_WINDOW songs from where you start, or that many picked at random for Shuffle.
+  if (L.ctx.window && playable.length > QUEUE_WINDOW) {
+    if (shuffle) {
+      const pool = playable.slice();
+      for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+      playable = pool.slice(0, QUEUE_WINDOW);
+    } else {
+      playable = playable.slice(start || 0, (start || 0) + QUEUE_WINDOW);
+      start = 0;
+    }
+  }
   const queue = L.ctx.collection || { songs: playable.map(qid) };
   await cmd({ type: 'playQueue', queue, startIndex: shuffle ? undefined : start, shuffle });
 }
@@ -259,6 +273,7 @@ const LIB_PATHS = {
   playlists: '/v1/me/library/playlists',
   albums: '/v1/me/library/albums',
   artists: '/v1/me/library/artists',
+  songs: '/v1/me/library/songs',
 };
 
 // Apple's library can take a moment to reflect an edit or a delete; until it does, Orchard keeps showing
@@ -300,6 +315,16 @@ function withCatalogArtwork(r) {
   const art = cat && cat.attributes && cat.attributes.artwork;
   if (art) a.artwork = art;
   return r;
+}
+
+/** How many of one kind the library has (Apple's total from the first page), or null. */
+export async function libraryCount(kind) {
+  if (!LIB_PATHS[kind]) return null;
+  const r = await am(`${LIB_PATHS[kind]}?limit=${PAGE}${LIB_PARAMS[kind] || ''}`);
+  const total = r && r.meta && Number(r.meta.total);
+  if (Number.isFinite(total)) return total;
+  const n = ((r && r.data) || []).length;
+  return r && r.next ? `${n}+` : n;
 }
 
 /** Everything of one kind in the library. Once Apple says how many there are, the remaining pages load in parallel. */

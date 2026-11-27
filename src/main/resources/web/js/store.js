@@ -518,11 +518,14 @@ function onChange(d) {
   if (!d || typeof d !== 'object' || (d.by && d.by === deviceId())) return; // our own: shown already
   document.dispatchEvent(new CustomEvent('remote-change', { detail: d }));
   if (d.kind !== 'library' || typeof d.path !== 'string') return;
+  // A favorite only changes hearts (updated in place from 'remote-change') and the Favorite Songs playlist:
+  // nothing else is redrawn for it ('favorites-changed' lets that playlist's page refresh itself).
+  const favorite = d.path.startsWith('/v1/me/ratings/');
   for (const ms of [600, 6000]) {
     setTimeout(() => {
       const now = Date.now();
       affectedBy(d.path).forEach((prefix) => changedAt.set(prefix, now));
-      document.dispatchEvent(new CustomEvent('data-updated'));
+      document.dispatchEvent(new CustomEvent(favorite ? 'favorites-changed' : 'data-updated'));
     }, ms);
   }
 }

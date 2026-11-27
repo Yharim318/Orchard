@@ -220,11 +220,9 @@ async function run() {
   flushPics();
   await each(albums, (r) => albumPage(r.id));
   flushPics();
-  const songs = await data(PAGE_PATHS.songs());
-  if (songs) {
-    trackPics(songs.data);
-    await allPages(songs.next, trackPics);
-  }
+  // Songs: the same pages the Library page's Songs tab reads (libraryList), so they land in the same cache entries.
+  const songs = await libraryList('songs').catch(() => []);
+  trackPics(songs);
   flushPics();
   await each(artists, (r) => libraryArtistPage(r));
   flushPics();

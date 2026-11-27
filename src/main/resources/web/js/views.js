@@ -1,10 +1,10 @@
 // Page views: home, search, album, playlist, artist, library, songs, queue, lyrics.
-import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast, hexColor } from './util.js';
+import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast, hexColor, setHtml, EQ } from './util.js';
 import { S, am, sf, subscribe, queuePage, browsable } from './store.js';
 import {
   toTrack, toCard, cardHtml, shelf, grid, trackRows, registerList, getList, markPlaying, loading, errorBox,
   libraryList, playList, playQueue, addToLibrary, openMenu, collectionMenuItems, favoritesPlaylist, moveInQueue,
-  withRecentEdits,
+  withRecentEdits, libraryCount,
 } from './components.js';
 import { enableRowDrag, isRowDragging } from './queuedrag.js';
 import { playlistArtwork, mosaicFor, refreshMosaic, scanMosaics } from './artwork.js';
@@ -576,36 +576,49 @@ export function libraryRow(r) {
   const c = toCard(r);
   if (!c) return '';
   const kind = r.type.includes('playlist') ? 'Playlist' : r.type.includes('album') ? 'Album' : 'Artist';
-  return `<a class="lib-item" href="${esc(c.href)}" title="${esc(c.title)}" data-card="${esc(JSON.stringify({ id: c.id, type: c.type, play: c.play, href: c.href }))}">
+  // Every id this item can be played under (library id, catalog id): the playing one is marked (app.js).
+  const pp = (r.attributes && r.attributes.playParams) || {};
+  const ids = [...new Set([r.id, pp.id, pp.catalogId].filter(Boolean).map(String))].join(' ');
+  return `<a class="lib-item" href="${esc(c.href)}" title="${esc(c.title)}" data-ids="${esc(ids)}" data-card="${esc(JSON.stringify({ id: c.id, type: c.type, play: c.play, href: c.href }))}">
     <img class="${c.round ? 'round' : ''}" loading="lazy" src="${art(c.artwork, 96)}"${c.mosaic ? ` data-mosaic="${esc(c.mosaic)}"` : ''} alt="">
-    <div><div class="t">${esc(c.title)}</div><div class="s">${kind}${c.round || !c.sub || c.sub === kind ? '' : ` • ${esc(c.sub)}`}</div></div></a>`;
+    <div><div class="t">${esc(c.title)}</div><div class="s">${kind}${c.round || !c.sub || c.sub === kind ? '' : ` • ${esc(c.sub)}`}</div></div>${EQ}</a>`;
 }
 
-// The library page has its own layout (header, filters, search, sort, grid or list); it shares nothing with the
-// sidebar's compact list, so collapsing the sidebar doesn't touch it.
-const LIB_KINDS = { playlists: 'Playlists', albums: 'Albums', artists: 'Artists' };
-const LIB_SORTS = { recent: 'Recently added', alpha: 'Alphabetical', creator: 'Creator' };
-let libQuery = ''; // the filter text survives switching tabs and quiet refreshes
-
-const libSingular = (kind) => ({ playlists: 'Playlist', albums: 'Album', artists: 'Artist' }[kind]);
+// ------------------------------------------------------------------ library page
+// One page with four tabs: Playlists, Albums, Artists and Songs, each with its count. The toolbar (search, sort,
+// grid/list; Play and Shuffle on Songs) stays at the top while scrolling. Songs lists the whole library: search
+// and sort cover every song, and rows are drawn in chunks as you scroll so thousands of songs stay quick. The
+// sidebar is the compact list; this page shares nothing with it, so collapsing the sidebar doesn't touch it.
+const LIB_KINDS = { playlists: 'Playlists', albums: 'Albums', artists: 'Artists', songs: 'Songs' };
+const LIB_SORTS = {
+  playlists: { recent: 'Recently added', alpha: 'Title', creator: 'Creator' },
+  albums: { recent: 'Recently added', alpha: 'Title', creator: 'Artist', year: 'Release year' },
+  artists: { recent: 'Recently added', alpha: 'Name' },
+  songs: { recent: 'Recently added', alpha: 'Title', artist: 'Artist', album: 'Album' },
+};
+const SONG_CHUNK = 200;
+const libQuery = {}; // per tab: the filter text survives switching tabs and quiet refreshes
+const nf = new Intl.NumberFormat();
+const cmpText = (x, y) => (x || '￿').localeCompare(y || '￿', undefined, { sensitivity: 'base', numeric: true });
 
 function libEntry(r, kind) {
   const c = toCard(r);
   if (!c) return null;
   const a = r.attributes || {};
-  const creator = kind === 'albums' ? a.artistName || '' : kind === 'playlists' ? a.curatorName || '' : '';
-  c.creator = creator;
-  c.sub = kind === 'artists' ? 'Artist' : kind === 'albums' ? creator || 'Album' : creator ? `Playlist • ${creator}` : 'Playlist';
+  c.creator = kind === 'albums' ? a.artistName || '' : kind === 'playlists' ? a.curatorName || '' : '';
+  c.year = kind === 'albums' && a.releaseDate ? a.releaseDate.slice(0, 4) : '';
+  c.sub = kind === 'artists' ? 'Artist' : kind === 'albums' ? [c.creator, c.year].filter(Boolean).join(' • ') || 'Album'
+    : c.creator || 'Playlist';
   c.added = a.dateAdded ? Date.parse(a.dateAdded) : 0;
   return c;
 }
 
-function libSorted(list, sort) {
-  const by = (f) => list.slice().sort((x, y) => f(x, y) || x.title.localeCompare(y.title, undefined, { sensitivity: 'base' }));
-  if (sort === 'alpha') return by(() => 0);
-  if (sort === 'creator') return by((x, y) => (x.creator || '￿').localeCompare(y.creator || '￿', undefined, { sensitivity: 'base' }));
-  // Recently added; entries without a date keep Apple's order, after the dated ones.
-  return list.map((c, i) => [c, i]).sort((x, y) => (y[0].added - x[0].added) || (x[1] - y[1])).map((x) => x[0]);
+/** Sorted copy; ties (and "Recently added" without dates) keep Apple's order. */
+function libSorted(list, sort, key) {
+  const order = new Map(list.map((x, i) => [x, i]));
+  const by = (f) => list.slice().sort((x, y) => f(x, y) || order.get(x) - order.get(y));
+  if (sort === 'recent') return by((x, y) => (key(y).added || 0) - (key(x).added || 0));
+  return by(sort);
 }
 
 function libDate(ms) {
@@ -620,72 +633,172 @@ function libDate(ms) {
 
 const libCardData = (c) => esc(JSON.stringify({ id: c.id, type: c.type, play: c.play, href: c.href }));
 
-function libGridHtml(list, pinned) {
-  const pin = pinned ? `
-    <a class="lib-pin fav" href="#/favorites"><span class="lib-pin-ic">${icon('heart')}</span><span class="lib-pin-t">Favorite Songs</span><span class="lib-pin-s">Synced with Apple Music</span></a>
-    <a class="lib-pin all" href="#/songs"><span class="lib-pin-ic">${icon('library')}</span><span class="lib-pin-t">Songs</span><span class="lib-pin-s">Everything in your library</span></a>` : '';
-  return `<div class="lib-grid">${pin}${list.map(cardHtml).join('')}</div>`;
+// Favorite Songs leads the playlists, as an ordinary card (it's Apple's own auto-updating playlist).
+const FAV_CARD = `<div class="card lib-fav" data-href="#/favorites"><div class="card-art"><div class="lib-fav-art">${icon('heart')}</div></div>
+  <div class="card-title">Favorite Songs</div><div class="card-sub">Synced with Apple Music</div></div>`;
+const FAV_ROW = `<div class="lib-tr" data-href="#/favorites"><span class="lib-td-title"><span class="lib-fav-art sq">${icon('heart')}</span>
+  <span><b>Favorite Songs</b><small>Synced with Apple Music</small></span></span><span></span><span></span></div>`;
+
+function libGridHtml(list, withFav) {
+  return `<div class="lib-grid">${withFav ? FAV_CARD : ''}${list.map(cardHtml).join('')}</div>`;
 }
 
-function libListHtml(list, pinned, kind) {
+/** List view: only columns that say something about this kind (no "Type" column that repeats the tab). */
+function libListHtml(list, withFav, kind) {
   const dated = list.some((c) => c.added);
-  const row = (c, i) => `<a class="lib-tr" href="${esc(c.href)}" data-card="${libCardData(c)}">
-      <span class="lib-td-n">${i + 1}</span>
-      <span class="lib-td-title"><img class="${c.round ? 'round' : ''}" loading="lazy" src="${art(c.artwork, 96)}"${c.mosaic ? ` data-mosaic="${esc(c.mosaic)}"` : ''} alt="">
-        <span><b>${esc(c.title)}</b><small>${esc(c.sub)}</small></span></span>
-      <span class="lib-td-kind">${libSingular(kind)}</span>
-      <span class="lib-td-date">${dated ? libDate(c.added) : ''}</span></a>`;
-  const pin = (href, cls, ic, t, sub) => `<a class="lib-tr pinned" href="${href}">
-      <span class="lib-td-n"></span>
-      <span class="lib-td-title"><span class="lib-pin-sq ${cls}">${icon(ic)}</span><span><b>${t}</b><small>${sub}</small></span></span>
-      <span class="lib-td-kind">Collection</span><span class="lib-td-date"></span></a>`;
-  return `<div class="lib-table${dated ? '' : ' undated'}">
-    <div class="lib-tr lib-th"><span class="lib-td-n">#</span><span>Title</span><span class="lib-td-kind">Type</span><span class="lib-td-date">${dated ? 'Date added' : ''}</span></div>
-    ${pinned ? pin('#/favorites', 'fav', 'heart', 'Favorite Songs', 'Synced with Apple Music') + pin('#/songs', 'all', 'library', 'Songs', 'Everything in your library') : ''}
-    ${list.map(row).join('')}</div>`;
+  const extra = kind === 'albums' && list.some((c) => c.year) ? 'Year' : '';
+  const play = (c) => (c.play ? `<button class="lib-tr-play" data-act="play-q" data-q="${esc(JSON.stringify(c.play))}" aria-label="Play ${esc(c.title)}">${icon('play')}</button>` : '');
+  const row = (c) => `<div class="lib-tr" data-href="${esc(c.href)}" data-card="${libCardData(c)}">
+      <span class="lib-td-title"><span class="lib-tr-art"><img class="${c.round ? 'round' : ''}" loading="lazy" src="${art(c.artwork, 96)}"${c.mosaic ? ` data-mosaic="${esc(c.mosaic)}"` : ''} alt="">${play(c)}</span>
+        <span><b>${esc(c.title)}</b><small>${esc(kind === 'albums' ? c.creator || 'Album' : c.sub)}</small></span></span>
+      <span class="lib-td-extra">${extra ? esc(c.year) : ''}</span>
+      <span class="lib-td-date">${dated ? libDate(c.added) : ''}</span></div>`;
+  return `<div class="lib-table${extra ? ' with-extra' : ''}${dated ? '' : ' undated'}">
+    <div class="lib-tr lib-th"><span>${kind === 'artists' ? 'Name' : 'Title'}</span><span class="lib-td-extra">${extra}</span><span class="lib-td-date">${dated ? 'Added' : ''}</span></div>
+    ${withFav ? FAV_ROW : ''}${list.map(row).join('')}</div>`;
 }
 
 async function library(el, m) {
   setHero('3d2f5c');
   const kind = LIB_KINDS[m[1]] ? m[1] : 'playlists';
+  const sorts = LIB_SORTS[kind];
   let view = persist('orchard.libView') === 'list' ? 'list' : 'grid';
-  let sort = LIB_SORTS[persist('orchard.libSort')] ? persist('orchard.libSort') : 'recent';
-  if (kind === 'artists' && sort === 'creator') sort = 'alpha';
+  const savedSort = persist(`orchard.libSort.${kind}`);
+  let sort = sorts[savedSort] ? savedSort : 'recent';
+  const songs = kind === 'songs';
   el.innerHTML = `<div class="page lib-page">
     <header class="lib-head">
       <h1>Your Library</h1>
-      <button class="lib-new" data-lp="new">${icon('plus')}<span>Create playlist</span></button>
+      <button class="lib-new" data-lp="new">${icon('plus')}<span>New playlist</span></button>
     </header>
+    <nav class="lib-tabs" aria-label="Library">${Object.entries(LIB_KINDS).map(([k, label]) =>
+      `<a class="lib-tab${k === kind ? ' on' : ''}" href="#/library/${k}"${k === kind ? ' aria-current="page"' : ''}>${label}<span class="lib-count" data-count="${k}"></span></a>`).join('')}</nav>
+    <div class="lib-stick"></div>
     <div class="lib-tools">
-      <nav class="lib-tabs">${Object.entries(LIB_KINDS).map(([k, label]) =>
-        `<a class="lib-tab${k === kind ? ' on' : ''}" href="#/library/${k}">${label}</a>`).join('')}<a class="lib-tab" href="#/songs">Songs</a></nav>
-      <div class="lib-ctl">
-        <label class="lib-find">${icon('search')}<input type="search" placeholder="Search in ${LIB_KINDS[kind]}" value="${esc(libQuery)}" aria-label="Search in ${LIB_KINDS[kind]}"></label>
-        <button class="lib-sort" data-lp="sort"><span>${LIB_SORTS[sort]}</span>${icon('sort')}</button>
-        <div class="lib-views" role="group" aria-label="View">
-          <button data-view="grid" title="Grid" class="${view === 'grid' ? 'on' : ''}">${icon('grid')}</button>
-          <button data-view="list" title="List" class="${view === 'list' ? 'on' : ''}">${icon('list')}</button>
-        </div>
-      </div>
+      ${songs ? `<button class="lib-play" data-lp="play" title="Play" aria-label="Play">${icon('play')}</button>
+        <button class="lib-shuffle" data-lp="shuffle" title="Shuffle" aria-label="Shuffle">${icon('shuffle')}</button>` : ''}
+      <label class="lib-find">${icon('search')}<input type="search" placeholder="Search ${LIB_KINDS[kind].toLowerCase()}" value="${esc(libQuery[kind] || '')}" aria-label="Search ${LIB_KINDS[kind].toLowerCase()}"></label>
+      <span class="lib-grow"></span>
+      <button class="lib-sort" data-lp="sort" title="Sort"><span>${sorts[sort]}</span>${icon('sort')}</button>
+      ${songs ? '' : `<div class="lib-views" role="group" aria-label="View">
+        <button data-view="grid" title="Grid" class="${view === 'grid' ? 'on' : ''}">${icon('grid')}</button>
+        <button data-view="list" title="List" class="${view === 'list' ? 'on' : ''}">${icon('list')}</button>
+      </div>`}
     </div>
     <div class="lib-body">${loading()}</div></div>`;
   const page = el.querySelector('.lib-page');
   const body = page.querySelector('.lib-body');
   const input = page.querySelector('.lib-find input');
-  let entries = null;
+  const cleanups = [];
 
-  const draw = () => {
-    if (!entries) return;
-    const q = libQuery.trim().toLowerCase();
-    const list = libSorted(entries, sort).filter((c) => !q || c.title.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q));
-    const pinned = kind === 'playlists' && !q;
-    if (!list.length && !pinned) {
-      body.innerHTML = q ? `<div class="empty"><h3>No matches for "${esc(libQuery.trim())}"</h3><p>Try a different word.</p></div>`
-        : `<div class="empty"><h3>No ${kind} yet</h3><p>${kind === 'artists' ? 'Artists' : LIB_KINDS[kind]} you add to your library show up here.</p></div>`;
-      return;
+  // The toolbar gets a background once it sticks to the top (it sits on the page's colour until then).
+  const tools = page.querySelector('.lib-tools');
+  const stickIo = new IntersectionObserver(([e]) => tools.classList.toggle('stuck', !e.isIntersecting), { root: $('#main') });
+  stickIo.observe(page.querySelector('.lib-stick'));
+  cleanups.push(() => stickIo.disconnect());
+
+  // Counts on every tab (first pages are cached; the warm-up has usually loaded them already).
+  for (const k of Object.keys(LIB_KINDS)) {
+    libraryCount(k).then((n) => {
+      const span = page.querySelector(`[data-count="${k}"]`);
+      if (span && n != null) span.textContent = typeof n === 'number' ? nf.format(n) : n;
+    }).catch(() => {});
+  }
+
+  if (!browsable()) {
+    body.innerHTML = `<div class="empty"><h3>Sign in to see your library</h3><p>Your playlists, albums, artists and songs from Apple Music show up here.</p></div>`;
+    return () => cleanups.forEach((f) => f());
+  }
+
+  const q = () => (libQuery[kind] || '').trim().toLowerCase();
+  let draw = () => {};
+  let songList = null; // Songs tab: the list key of what's shown, for Play / Shuffle
+
+  if (!songs) {
+    let entries = null;
+    const keyOf = (c) => c;
+    const cmp = {
+      alpha: (x, y) => cmpText(x.title, y.title),
+      creator: (x, y) => cmpText(x.creator, y.creator) || cmpText(x.title, y.title),
+      year: (x, y) => cmpText(y.year, x.year) || cmpText(x.title, y.title),
+    };
+    draw = () => {
+      if (!entries) return;
+      const text = q();
+      const list = libSorted(entries, sort === 'recent' ? 'recent' : cmp[sort], keyOf)
+        .filter((c) => !text || c.title.toLowerCase().includes(text) || (c.creator || '').toLowerCase().includes(text));
+      const withFav = kind === 'playlists' && !text;
+      if (!list.length && !withFav) {
+        body.innerHTML = text ? `<div class="empty"><h3>No matches for "${esc(libQuery[kind].trim())}"</h3><p>Try a different word.</p></div>`
+          : `<div class="empty"><h3>No ${kind} yet</h3><p>${LIB_KINDS[kind]} you add to your library show up here.</p></div>`;
+        return;
+      }
+      setHtml(body, view === 'grid' ? libGridHtml(list, withFav) : libListHtml(list, withFav, kind)); // pictures stay put
+    };
+    try {
+      entries = (await libraryList(kind)).map((r) => libEntry(r, kind)).filter(Boolean);
+      draw();
+    } catch (e) {
+      body.innerHTML = errorBox(e, 'your library');
     }
-    body.innerHTML = view === 'grid' ? libGridHtml(list, pinned) : libListHtml(list, pinned, kind);
-  };
+  } else {
+    // Songs: shown from the first page at once if the whole list isn't cached yet, then complete.
+    let all = null;
+    let shown = 0;
+    let io = null;
+    let partial = null;
+    const toEntry = (r, i) => ({ t: toTrack(r), added: r.attributes && r.attributes.dateAdded ? Date.parse(r.attributes.dateAdded) : 0, i });
+    const cmp = {
+      alpha: (x, y) => cmpText(x.t.title, y.t.title),
+      artist: (x, y) => cmpText(x.t.artist, y.t.artist) || cmpText(x.t.album, y.t.album) || (x.t.disc - y.t.disc) || ((x.t.num || 0) - (y.t.num || 0)),
+      album: (x, y) => cmpText(x.t.album, y.t.album) || (x.t.disc - y.t.disc) || ((x.t.num || 0) - (y.t.num || 0)),
+    };
+    const more = () => {
+      const L = getList(songList);
+      const listEl = body.querySelector('.lib-songs');
+      if (!L || !listEl || shown >= L.tracks.length) return;
+      const next = L.tracks.slice(shown, shown + SONG_CHUNK);
+      listEl.insertAdjacentHTML('beforeend', trackRows(next, songList, { start: shown, header: false }));
+      shown += next.length;
+      markPlaying(listEl);
+    };
+    draw = () => {
+      const source = all || partial;
+      if (!source) return;
+      const text = q();
+      const tracks = libSorted(source, sort === 'recent' ? 'recent' : cmp[sort], (x) => x)
+        .filter((x) => !text || [x.t.title, x.t.artist, x.t.album].some((v) => (v || '').toLowerCase().includes(text)))
+        .map((x) => x.t);
+      songList = registerList(tracks, { window: true });
+      if (io) io.disconnect();
+      if (!tracks.length) {
+        body.innerHTML = text ? `<div class="empty"><h3>No matches for "${esc(libQuery[kind].trim())}"</h3><p>Try a different word.</p></div>`
+          : '<div class="empty"><h3>No songs yet</h3><p>Songs you add to your library show up here.</p></div>';
+        return;
+      }
+      shown = Math.min(SONG_CHUNK, tracks.length);
+      const note = all ? '' : `<p class="lib-note">${loading()}Loading the rest of your songs…</p>`;
+      setHtml(body, `<div class="tracks lib-songs">${trackRows(tracks.slice(0, shown), songList, { album: true })}</div>${note}<div class="sentinel"></div>`);
+      markPlaying(body);
+      io = new IntersectionObserver((es) => { if (es[0].isIntersecting) more(); }, { root: $('#main'), rootMargin: '1500px' });
+      io.observe(body.querySelector('.sentinel'));
+    };
+    cleanups.push(() => { if (io) io.disconnect(); });
+    const whole = libraryList('songs');
+    const quick = await Promise.race([whole.then(() => null, () => null), new Promise((r) => setTimeout(() => r('slow'), 300))]);
+    if (quick === 'slow') {
+      try {
+        const first = await am(PAGE_PATHS.songs());
+        if (!all) { partial = (first.data || []).map(toEntry); draw(); }
+      } catch (e) { /* the whole list may still arrive */ }
+    }
+    try {
+      all = (await whole).map(toEntry);
+      draw();
+    } catch (e) {
+      if (!partial) body.innerHTML = errorBox(e, 'your songs');
+    }
+  }
 
   page.addEventListener('click', (e) => {
     const v = e.target.closest('[data-view]');
@@ -699,31 +812,22 @@ async function library(el, m) {
     const b = e.target.closest('[data-lp]');
     if (!b) return;
     if (b.dataset.lp === 'new') openPlaylistEditor();
+    if (b.dataset.lp === 'play' && songList) playList(songList, 0);
+    if (b.dataset.lp === 'shuffle' && songList) playList(songList, null, { shuffle: true });
     if (b.dataset.lp === 'sort') {
-      const keys = Object.keys(LIB_SORTS).filter((k) => kind !== 'artists' || k !== 'creator');
-      openMenu(b, keys.map((k) => ({
-        label: LIB_SORTS[k], icon: k === sort ? 'check' : undefined,
+      openMenu(b, Object.keys(sorts).map((k) => ({
+        label: sorts[k], icon: k === sort ? 'check' : undefined,
         run: () => {
           sort = k;
-          persist('orchard.libSort', k);
-          b.querySelector('span').textContent = LIB_SORTS[k];
+          persist(`orchard.libSort.${kind}`, k);
+          b.querySelector('span').textContent = sorts[k];
           draw();
         },
       })), 'Sort by');
     }
   });
-  input.addEventListener('input', debounce(() => { libQuery = input.value; draw(); }, 120));
-
-  if (!browsable()) {
-    body.innerHTML = `<div class="empty"><h3>Sign in to see your library</h3><p>Your playlists, albums and artists from Apple Music show up here.</p></div>`;
-    return;
-  }
-  try {
-    entries = (await libraryList(kind)).map((r) => libEntry(r, kind)).filter(Boolean);
-    draw();
-  } catch (e) {
-    body.innerHTML = errorBox(e, 'your library');
-  }
+  input.addEventListener('input', debounce(() => { libQuery[kind] = input.value; draw(); }, 120));
+  return () => cleanups.forEach((f) => f());
 }
 
 /** Apple Music's own "Favorite Songs" playlist: everything you've hearted, in Orchard or any Apple device. */
@@ -746,33 +850,9 @@ async function favorites(el) {
     Apple creates that playlist after your first favorite; it can take a minute to show up.</p></div></div>`;
 }
 
-async function songs(el) {
-  setHero('4a2a7a');
-  el.innerHTML = loading();
-  let r;
-  try {
-    r = await am(PAGE_PATHS.songs());
-  } catch (e) {
-    el.innerHTML = errorBox(e, 'your songs');
-    return;
-  }
-  const tracks = (r.data || []).map(toTrack);
-  const key = registerList(tracks);
-  el.innerHTML = `<div class="page">
-    <header class="hero"><div class="hero-art songs-art all">${icon('library')}</div><div class="hero-text"><div class="kind">Library</div><h1>Songs</h1>
-    <div class="meta">${r.meta && r.meta.total ? `${r.meta.total} songs` : ''}</div></div></header>
-    ${actionsHtml({ more: false })}
-    <div class="tracks">${tracks.length ? trackRows(tracks, key) : '<div class="empty"><p>Songs you add to your library show up here.</p></div>'}</div></div>`;
-  bindActions(el, { play: () => playList(key, 0), shuffle: () => playList(key, null, { shuffle: true }) });
-  markPlaying(el);
-  const list = el.querySelector('.tracks');
-  return infinite(el.querySelector('.page'), withLimit(r.next), (data) => {
-    const L = getList(key);
-    const more = data.map(toTrack);
-    const start = L.tracks.length;
-    L.tracks.push(...more);
-    list.insertAdjacentHTML('beforeend', trackRows(more, key, { start, header: false }));
-  });
+/** The old Songs page: the Library page's Songs tab now (old links and bookmarks still work). */
+function songs() {
+  location.replace('#/library/songs');
 }
 
 // ------------------------------------------------------------------ queue

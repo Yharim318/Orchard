@@ -49,7 +49,7 @@ Static containers that the scripts fill in:
 
 | Element | Filled by | Purpose |
 |---------|-----------|---------|
-| `#sidebar` → `#nav`, `#libhead`, `#lib-chips`, `#lib-list` | `app.js buildShell`, `renderSidebarLibrary` | Desktop left column: Home/Search and Your Library |
+| `#sidebar` → `#nav`, `#libhead`, `#lib-chips` (tabs), `#side-tools` (search + sort), `#lib-list` | `app.js buildShell`, `renderSidebarLibrary` | Desktop left column: Home/Search and Your Library |
 | `#main` → `.topbar` (`#back`, phones only), `#view` | `app.js` (`route()` renders into `#view`) | The scrolling page area. Desktop has no back/forward buttons; phones keep Back because a home-screen app has no other one |
 | `#right` | `player.js renderRight` | Desktop right panel (Queue) |
 | `#player` | `player.js buildPlayer` | Desktop player bar + phone mini player + "Listening on…" banner |
@@ -91,6 +91,7 @@ The hero colour comes from Apple's artwork `bgColor`: `views.setHero()` sets `--
 | `$`, `$$` | `querySelector` / `querySelectorAll` (as array). |
 | `esc(s)` | HTML-escape. **Use for every interpolated value.** |
 | `art(artwork, size)`, `artWide(artwork, width)` | Turn Apple's artwork URL template (`…/{w}x{h}bb.jpg`) into a real URL (square / keeping aspect ratio). `PLACEHOLDER` when missing. In the Orchard window (`?host`), Apple (`mzstatic.com`) URLs become `<ROOT>/api/img?u=…`, the server's disk cache; phones use Apple's URL directly. |
+| `keepPictures(current, fresh)`, `setHtml(el, html)`, `pictureKey(img)` | Redraw without blinking: new `<img>`s showing a picture already on screen (same address, or same playlist mosaic) are replaced by the existing, decoded elements. Used by quiet page redraws (`app.js doSoftRefresh`), the sidebar library and the Library page's grid/list. **Use `setHtml` instead of `innerHTML` when redrawing content that has pictures.** |
 | `appleArt(artwork, size)`, `appleArtWide(artwork, width)` | Apple's own address for the same picture (what `art()` resolves before the cache); `warmup.js` hands these to the server. |
 | `fmtTime(sec)`, `fmtTotal(sec)` | `3:45`, `1 hr 2 min`. |
 | `debounce`, `throttle` | Rate limiting (search box, volume slider). |
@@ -137,9 +138,9 @@ The single source of truth for the UI and the only module that talks to the serv
 | Area | Exports |
 |------|---------|
 | Data mapping | `toTrack(resource)`: Apple song/library-song/queue item → track object (`id, playId, catalogId, title, artist, album, artwork, duration, explicit, albumId, artistId, playable…`). `qid(track)`: the id to give MusicKit. `toCard(resource)`: album/playlist/artist/station/song → card object (`title, sub, artwork, href, play, round`). |
-| Track lists | `registerList(tracks, ctx)` → key; `getList(key)`. `ctx.collection` (e.g. `{album:id}`) makes playback queue the whole album/playlist; `ctx.queueOffset` makes rows jump within the current queue. `playList(key, index, {shuffle})`, `playQueue(desc, shuffle)`. `trackRows(tracks, key, opts)` renders rows (`album`, `artwork`, `start`, `header`, `discs` options). `markPlaying(root)` highlights the current track and calls `hydrateLoves`. |
+| Track lists | `registerList(tracks, ctx)` → key; `getList(key)`. `ctx.collection` (e.g. `{album:id}`) makes playback queue the whole album/playlist; `ctx.queueOffset` makes rows jump within the current queue. `ctx.window` (very long lists, e.g. the whole library's songs) queues at most `QUEUE_WINDOW` (500) songs: those from where you start, or that many at random for Shuffle. `playList(key, index, {shuffle})`, `playQueue(desc, shuffle)`. `trackRows(tracks, key, opts)` renders rows (`album`, `artwork`, `start`, `header`, `discs` options). `markPlaying(root)` highlights the current track and calls `hydrateLoves`. |
 | Cards | `cardHtml(card)`, `shelf(title, resources)`, `grid(resources)`, `loading()`, `errorBox(err, what)`. |
-| Library | `libraryList(kind)` (playlists/albums/artists, the whole library with no limit: first page, then the rest four at a time once the total is known; artists get their catalog artist's artwork; cached), `invalidateLibrary(kind)` (fires a `library-changed` DOM event), `addToLibrary`, `addToPlaylist`, `createPlaylist`. |
+| Library | `libraryCount(kind)` (Apple's total from the first page), `libraryList(kind)` (playlists/albums/artists/songs, the whole library with no limit: first page, then the rest four at a time once the total is known; artists get their catalog artist's artwork; cached), `invalidateLibrary(kind)` (fires a `library-changed` DOM event), `addToLibrary`, `addToPlaylist`, `createPlaylist`. |
 | Favorites | `hydrateLoves(root)`, `isLoved(id)`, `lovedCached(id)`, `setLoved(id, on)`, `toggleLoved(id)`, `favoritesPlaylist()`. Ratings are fetched 50 at a time and cached; changes fire a `loved-changed` DOM event. |
 | Menus | `openMenu(anchor, items, title)`, `closeMenu()`. Items are `{label, icon, run}`, `{sep:true}` or `{label, icon, submenu: async () => items}`. Shown as a popup on desktop and a bottom sheet on phones. `trackMenuItems(track)`, `collectionMenuItems(card)` build the standard menus. |
 
@@ -167,9 +168,9 @@ the bottom maps hash patterns to pages:
 | `#/album/<id>` | `album` | catalog album or library album (`l.` ids) |
 | `#/playlist/<id>` | `playlist` | catalog or library playlist (`p.` ids), infinite scroll |
 | `#/artist/<id>` | `artist` (+ `libraryArtist` for `r.` ids) | artist with views (top songs, albums, singles…) |
-| `#/library/<kind>` | `library` | `libraryList`. A page of its own (`.lib-page`, sharing no classes with the sidebar list): tabs, a search filter, sort (recently added / alphabetical / creator, `localStorage['orchard.libSort']`), grid or list view (`orchard.libView`), with Favorite Songs and Songs pinned first on Playlists |
+| `#/library/<kind>` | `library` | `libraryList`. A page of its own (`.lib-page`, sharing no classes with the sidebar list). Tabs Playlists / Albums / Artists / Songs with counts (`libraryCount`). A toolbar that sticks to the top (`.lib-stick` observer adds `.stuck`): search (per tab, `libQuery`), sort (per tab: `LIB_SORTS`, saved as `orchard.libSort.<kind>`), grid/list (`orchard.libView`; list columns: title, Year for albums when known, date added). Favorite Songs is the first playlist card. **Songs**: the whole library's songs (`libraryList('songs')`; the first page shows at once if the rest isn't cached), searched and sorted in memory, rows drawn `SONG_CHUNK` (200) at a time as you scroll, Play/Shuffle via `playList` with `ctx.window` |
 | `#/favorites` | `favorites` | Apple's "Favorite Songs" playlist |
-| `#/songs` | `songs` | `/v1/me/library/songs`, infinite scroll |
+| `#/songs` | `songs` | Old address: redirects to `#/library/songs` |
 | `#/queue` | `queue` → `renderQueue` | `S.state.queue` (live) plus `store.queuePage` pages of 200 loaded as you scroll (any length). Pages are kept while `rev` is unchanged; after an edit they're re-read, then redrawn once. |
 
 Helpers: `setHero(color)`, `heroHtml`, `actionsHtml` + `bindActions` (the big play / shuffle / add / more
@@ -265,7 +266,7 @@ not warmed. Keep `SIZE` in step with the sizes used in views/components.
 | Function | Purpose |
 |----------|---------|
 | `buildShell()` | Static parts of the sidebar, library header and tab bar. |
-| `renderSidebarLibrary()`, `bindSidebar()` | Sidebar library (Favorite Songs, Songs, then playlists/albums/artists chips), "+" to create a playlist; re-renders on `library-changed`. |
+| `renderSidebarLibrary()`, `renderSideTabs()`, `drawSideList()`, `markSidePlaying()`, `bindSidebar()` | Sidebar library, the Library page's controls in compact form: tabs with counts (`libraryCount`), a search box (`sideQuery`, Esc clears) and a sort per tab (Recent / A–Z / Creator or Artist, `orchard.sideSort.<kind>`). Favorite Songs and Songs are pinned on top of the Playlists tab (hidden while searching). The playlist/album the current song was queued from (`state.item.container`, matched against each row's `data-ids`) gets an accent title and an equalizer (an accent ring in the collapsed rail). "+" creates a playlist; re-renders on `library-changed` / `data-updated`. |
 | `route()` | Matches `location.hash` against `views.routes`, runs the page's cleanup, renders the new page into a hidden `.view-stage` (`stage`), waits until the pictures that will be on screen are decoded (`picturesReady`, at most `NAV_WAIT_MS` = 200 ms in total), then swaps it in (`showPage`, which also focuses `[data-autofocus]`). Still loading after 200 ms: shown anyway (loading dots), filling in as data arrives. Guards against out-of-order async renders with `routeSeq`; `routing` holds quiet redraws back meanwhile. |
 | `softRefresh()`, `doSoftRefresh()` | Quiet redraw of the current page (`view-refresh` / `data-updated` events): rendered staged, pictures decoded (up to 2 s, the old page stays up), swapped in at the same scroll position. Waits while navigating, dragging a song or typing in the page. |
 | `highlightNav()` | Marks the active nav/tab/library item. |
@@ -301,7 +302,7 @@ nothing leaks into Apple's page except `window.__orchard`.
 | Guard | Runs only in the right place: top-level music.apple.com in window mode (not Orchard's own `/orchard` page), or the `#am-engine` iframe in embedded mode; never twice. |
 | `log`, `emit` | `console.log('[orchard]', …)` (Java prints these) and `window.__orchardEmit(JSON)` (the CDP binding). |
 | Listeners | `keydown`: the `apple` keys (default Ctrl+Shift+A) → `{type:'ui', action:'toggle'}`, the `log` keys (default Ctrl+Shift+T) → `{type:'ui', action:'console'}`, read from the app window's `localStorage['orchard.keys']` (same site); `pagehide` → `{type:'bye'}`. |
-| `itemInfo(mediaItem)` | MusicKit media item → the compact item object in the state (id, catalogId, title, artist, album, artwork template, bgColor, duration, albumId, artistId, explicit, hasLyrics). |
+| `itemInfo(mediaItem)` | MusicKit media item → the compact item object in the state (id, catalogId, title, artist, album, artwork template, bgColor, duration, albumId, artistId, explicit, hasLyrics, container: the `{id, type}` of the playlist/album it was queued from, or null). |
 | `snapshot(full)` | Builds the state object; `full` adds the queue window (15 before, 100 after the current item). |
 | `schedule(full)` | Coalesces events into one emit 60 ms later; time updates at most every 5 s. |
 | `attach(instance)`, `findInstance`, poll | Wait for Apple's MusicKit instance, subscribe to its events. |

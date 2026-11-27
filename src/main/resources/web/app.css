@@ -88,7 +88,7 @@ body.side-collapsed { grid-template-columns: 72px minmax(0, 1fr); }
 body.side-collapsed.right-open { grid-template-columns: 72px minmax(0, 1fr) minmax(340px, 0fr); }
 body.side-collapsed #nav { padding: 12px 6px; align-items: center; }
 body.side-collapsed #nav a, body.side-collapsed #nav .nav-item { padding: 10px; justify-content: center; }
-body.side-collapsed #nav span, body.side-collapsed .lib-title span, body.side-collapsed #sidebar .chips,
+body.side-collapsed #nav span, body.side-collapsed .lib-title span, body.side-collapsed #sidebar .side-tabs, body.side-collapsed #sidebar .side-tools,
 body.side-collapsed #sidebar .lib-item > div, body.side-collapsed #new-playlist, body.side-collapsed #sidebar .lib-list .dev-note { display: none; }
 body.side-collapsed #nav .brand { padding-bottom: 8px; }
 body.side-collapsed .library { padding: 8px 4px; }
@@ -96,6 +96,9 @@ body.side-collapsed #libhead { flex-direction: column; padding: 6px 0 10px; gap:
 body.side-collapsed #libhead .lib-title { margin: 0; }
 body.side-collapsed #sidebar .lib-list { scrollbar-width: none; }
 body.side-collapsed #sidebar .lib-item { justify-content: center; padding: 6px 0; }
+body.side-collapsed #sidebar .lib-item .eq { display: none; }
+/* The rail has no titles: the playing playlist/album gets an accent ring instead. */
+body.side-collapsed #sidebar .lib-item.playing img { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lib-title { display: flex; align-items: center; gap: 12px; font-weight: 700; color: var(--muted); }
 .lib-title:hover { color: var(--text); text-decoration: none; }
 .lib-title .ic { width: 24px; height: 24px; }
@@ -111,60 +114,99 @@ body.side-collapsed #sidebar .lib-item { justify-content: center; padding: 6px 0
 .lib-item img.round { border-radius: 50%; }
 .lib-item .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-item .s { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-item > div { min-width: 0; }
+.lib-item > div { min-width: 0; flex: 1; }
+/* The playlist/album that's playing (app.js markSidePlaying): accent title and a moving equalizer. */
+.lib-item .eq { display: none; flex: none; margin-right: 4px; }
+.lib-item.playing .eq { display: inline-flex; }
+.lib-item.playing .t { color: var(--accent); }
+/* Tabs with counts and a search + sort row: the Library page's controls, compact. */
+.side-tabs { display: flex; gap: 2px; padding: 0 4px; border-bottom: 1px solid rgba(255, 255, 255, .08); overflow-x: auto; scrollbar-width: none; flex: none; }
+.side-tab { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 8px 8px 10px; font-size: 13px; font-weight: 700; color: var(--muted); white-space: nowrap; transition: color .15s; }
+.side-tab:hover { color: var(--text); }
+.side-tab.on { color: var(--text); }
+.side-tab.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: var(--accent); }
+.side-count { font-size: 11px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.side-count:empty { display: none; }
+.side-tab.on .side-count { color: var(--text); opacity: .7; }
+.side-tools { display: flex; align-items: center; gap: 4px; padding: 10px 4px 6px; flex: none; }
+.side-find { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 999px; background: var(--hover); color: var(--muted); border: 1px solid transparent; cursor: text; }
+.side-find:focus-within { border-color: rgba(255, 255, 255, .3); color: var(--text); background: var(--hover-2); }
+.side-find .ic { width: 16px; height: 16px; flex: none; }
+.side-find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 13px; }
+.side-sort { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 999px; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; flex: none; }
+.side-sort:hover { color: var(--text); background: var(--hover); }
+.side-sort .ic { width: 16px; height: 16px; }
 .songs-ic { display: grid; place-items: center; background: linear-gradient(135deg, #5b2ee0, #c3a6ff); }
 .songs-ic .ic { width: 20px; height: 20px; }
 
 /* ------------------------------------------------------------ library page (#/library) — separate from the sidebar list */
-.lib-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 20px; }
+.lib-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 14px; }
 .lib-head h1 { font-size: 32px; letter-spacing: -0.02em; }
 .lib-new { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px 0 12px; border-radius: 999px; background: var(--hover); font-weight: 700; white-space: nowrap; transition: background .15s, transform .1s; }
 .lib-new:hover { background: var(--hover-2); transform: scale(1.03); }
-.lib-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 16px; }
-.lib-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
-.lib-tab { padding: 7px 14px; border-radius: 999px; background: var(--hover); font-weight: 600; white-space: nowrap; transition: background .15s; }
-.lib-tab:hover { background: var(--hover-2); text-decoration: none; }
-.lib-tab.on { background: var(--text); color: var(--bg); }
-.lib-ctl { display: flex; align-items: center; gap: 8px; }
-.lib-find { display: flex; align-items: center; gap: 8px; width: 220px; height: 36px; padding: 0 12px; border-radius: 6px; background: var(--hover); color: var(--muted); border: 1px solid transparent; cursor: text; }
-.lib-find:focus-within { border-color: rgba(255, 255, 255, .3); color: var(--text); }
-.lib-find .ic { width: 18px; height: 18px; }
+/* Tabs: text with a count, the current one underlined in the accent colour. */
+.lib-tabs { display: flex; gap: 6px; border-bottom: 1px solid rgba(255, 255, 255, .1); }
+.lib-tab { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px 12px; font-weight: 700; font-size: 15px; color: var(--muted); white-space: nowrap; transition: color .15s; }
+.lib-tab:hover { color: var(--text); text-decoration: none; }
+.lib-tab.on { color: var(--text); }
+.lib-tab.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--accent); }
+.lib-count { font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lib-count:empty { display: none; }
+.lib-tab.on .lib-count { color: var(--text); opacity: .7; }
+/* Toolbar: stays at the top while scrolling; gets a background once it sticks (app.js-free: an observer in views.js). */
+.lib-stick { height: 1px; margin-bottom: -1px; }
+.lib-tools { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 10px; margin: 0 -24px 6px; padding: 12px 24px;
+  transition: background-color .2s, box-shadow .2s; }
+.lib-tools.stuck { background: var(--panel); box-shadow: 0 8px 18px rgba(0, 0, 0, .35); }
+.lib-grow { flex: 1; }
+.lib-play { width: 44px; height: 44px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; flex: none; transition: transform .1s, background .15s; }
+.lib-play:hover { transform: scale(1.05); background: var(--accent-2); }
+.lib-play .ic { width: 22px; height: 22px; }
+.lib-shuffle { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+.lib-shuffle:hover { color: var(--text); background: var(--hover); }
+.lib-shuffle .ic { width: 22px; height: 22px; }
+.lib-find { display: flex; align-items: center; gap: 8px; flex: 0 1 320px; min-width: 0; height: 38px; padding: 0 12px; border-radius: 999px; background: var(--hover); color: var(--muted); border: 1px solid transparent; cursor: text; }
+.lib-find:focus-within { border-color: rgba(255, 255, 255, .3); color: var(--text); background: var(--hover-2); }
+.lib-find .ic { width: 18px; height: 18px; flex: none; }
 .lib-find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: inherit; }
-.lib-sort { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 12px; border-radius: 6px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.lib-sort { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 12px; border-radius: 999px; color: var(--muted); font-weight: 600; white-space: nowrap; }
 .lib-sort:hover { color: var(--text); background: var(--hover); }
 .lib-sort .ic, .lib-views .ic { width: 18px; height: 18px; }
-.lib-views { display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: var(--hover); }
-.lib-views button { width: 30px; height: 30px; border-radius: 6px; display: grid; place-items: center; color: var(--muted); }
+.lib-views { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--hover); }
+.lib-views button { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
 .lib-views button:hover { color: var(--text); }
 .lib-views button.on { background: var(--hover-2); color: var(--text); }
+.lib-note { display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); font-size: 13px; padding: 16px; }
+.lib-note .loading { padding: 0; }
 
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px; margin: 0 -12px; }
-/* Favorite Songs and Songs: wide gradient tiles at the start of the grid. */
-.lib-pin { grid-column: span 2; display: flex; flex-direction: column; margin: 12px; padding: 18px 20px; border-radius: 8px; color: #fff; min-height: 150px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .45); transition: filter .15s, transform .15s; }
-.lib-pin:hover { text-decoration: none; filter: brightness(1.08); transform: translateY(-2px); }
-.lib-pin.fav, .lib-pin-sq.fav { background: linear-gradient(135deg, #5b2ee0, #c3a6ff); }
-.lib-pin.all, .lib-pin-sq.all { background: linear-gradient(135deg, #2b6cb0, #8ec5ff); }
-.lib-pin-ic { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .2); margin-bottom: auto; }
-.lib-pin-ic .ic { width: 24px; height: 24px; }
-.lib-pin-t { margin-top: 20px; font-size: 26px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
-.lib-pin-s { font-size: 13px; opacity: .85; }
+/* Favorite Songs: Apple's auto-updating playlist, first among the playlists, drawn like any other card. */
+.lib-fav-art { width: 100%; height: 100%; border-radius: 6px; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, #5b2ee0, #c3a6ff); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.lib-fav-art .ic { width: 38%; height: 38%; }
+.lib-fav-art.sq { width: 44px; height: 44px; border-radius: 4px; box-shadow: none; flex: none; }
+.lib-fav-art.sq .ic { width: 20px; height: 20px; }
 
+/* List view: title column, then only columns that mean something for the kind (albums: year), then date added. */
 .lib-table { margin: 0 -8px; }
-.lib-tr { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(90px, 160px) minmax(110px, 160px); align-items: center; gap: 16px;
-  padding: 6px 8px; border-radius: 6px; color: var(--muted); font-size: 14px; }
-.lib-table.undated .lib-tr { grid-template-columns: 28px minmax(0, 1fr) minmax(90px, 160px) 0; }
-a.lib-tr:hover { background: var(--hover); color: var(--text); text-decoration: none; }
-.lib-th { margin-bottom: 8px; padding-bottom: 8px; border-radius: 0; border-bottom: 1px solid rgba(255, 255, 255, .1); font-size: 13px; }
-.lib-td-n { text-align: right; font-variant-numeric: tabular-nums; }
+.lib-tr { display: grid; grid-template-columns: minmax(0, 1fr) 0 minmax(110px, 150px); align-items: center; gap: 16px;
+  padding: 6px 8px; border-radius: 6px; color: var(--muted); font-size: 14px; cursor: pointer; }
+.lib-table.with-extra .lib-tr { grid-template-columns: minmax(0, 1fr) 70px minmax(110px, 150px); }
+.lib-table.undated .lib-tr { grid-template-columns: minmax(0, 1fr) 0 0; }
+.lib-table.undated.with-extra .lib-tr { grid-template-columns: minmax(0, 1fr) 70px 0; }
+.lib-tr:not(.lib-th):hover { background: var(--hover); color: var(--text); }
+.lib-th { margin-bottom: 8px; padding-bottom: 8px; border-radius: 0; border-bottom: 1px solid rgba(255, 255, 255, .1); font-size: 13px; cursor: default; }
 .lib-td-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.lib-td-title img, .lib-pin-sq { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; flex: none; background: var(--hover); }
-.lib-td-title img.round { border-radius: 50%; }
-.lib-pin-sq { display: grid; place-items: center; color: #fff; }
+.lib-tr-art { position: relative; flex: none; width: 44px; height: 44px; }
+.lib-tr-art img { width: 100%; height: 100%; border-radius: 4px; object-fit: cover; background: var(--hover); display: block; }
+.lib-tr-art img.round { border-radius: 50%; }
+.lib-tr-play { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 4px; background: rgba(0, 0, 0, .55); color: #fff; opacity: 0; transition: opacity .12s; }
+.lib-tr-play .ic { width: 20px; height: 20px; }
+.lib-tr:hover .lib-tr-play, .lib-tr-play:focus-visible { opacity: 1; }
 .lib-td-title > span:last-child { display: flex; flex-direction: column; min-width: 0; }
 .lib-td-title b { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-td-title small { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lib-td-kind, .lib-td-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-td-extra, .lib-td-date { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .dev-note { color: var(--muted); padding: 8px 12px; font-size: 13px; }
 
 /* ------------------------------------------------------------ main */
@@ -777,23 +819,21 @@ body.shuffle-on .fp-controls [data-c="shuffle"], body.repeat-on .fp-controls [da
   .card:hover { background: none; }
   .card-play { display: none; }
   .card-grid, .lib-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 -8px; }
-  .lib-head { margin-bottom: 14px; }
+  .lib-head { margin-bottom: 8px; }
   .lib-head h1 { font-size: 26px; }
   .lib-new { width: 40px; height: 40px; padding: 0; justify-content: center; }
   .lib-new span { display: none; }
-  .lib-tools { flex-direction: column; align-items: stretch; }
-  .lib-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
-  .lib-find { flex: 1 1 0; width: auto; min-width: 0; }
+  .lib-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 8px; }
+  .lib-tab { padding: 10px 10px 12px; }
+  .lib-tools { margin: 0 -16px 6px; padding: 10px 16px; gap: 6px; }
+  .lib-find { flex: 1 1 0; }
+  .lib-grow { display: none; }
   .lib-sort span { display: none; }
   .lib-sort { padding: 0 9px; }
-  .lib-pin { grid-column: span 1; margin: 8px; min-height: 150px; padding: 14px; }
-  .lib-pin-ic { width: 36px; height: 36px; }
-  .lib-pin-ic .ic { width: 20px; height: 20px; }
-  .lib-pin-t { font-size: 19px; }
-  .lib-pin-s { font-size: 12px; }
-  .lib-tr, .lib-table.undated .lib-tr { grid-template-columns: minmax(0, 1fr); padding: 6px 8px; }
-  .lib-th, .lib-td-n, .lib-td-kind, .lib-td-date { display: none !important; }
-  .lib-td-title img, .lib-pin-sq { width: 52px; height: 52px; }
+  .lib-tr, .lib-table .lib-tr { grid-template-columns: minmax(0, 1fr) !important; padding: 6px 8px; }
+  .lib-th, .lib-td-extra, .lib-td-date { display: none !important; }
+  .lib-tr-art, .lib-fav-art.sq { width: 52px; height: 52px; }
+  .lib-tr-play { display: none; }
   .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .quick { height: 56px; font-size: 13px; }
   .quick img { width: 56px; height: 56px; }

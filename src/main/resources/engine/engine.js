@@ -185,6 +185,8 @@
       artistId: relId(it, 'artists'),
       explicit: a.contentRating === 'explicit',
       hasLyrics: !!a.hasLyrics,
+      // The playlist/album this song was queued from, when it was (the sidebar marks it as playing).
+      container: it.container && it.container.id ? { id: String(it.container.id), type: String(it.container.type || '') } : null,
     };
   }
 

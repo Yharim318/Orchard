@@ -79,7 +79,7 @@ app window. Handled by the `handlers` table in `store.js`.
 | `engine-ui` | `{show: true|false}` or `{toggle: true}` | Show/hide Apple's page in the app window |
 | `relay-lost` | `{}` | App window only: lost the connection to another speaker |
 | `pair-requests` | `[{id, name, kind}]` | Orchard window on this computer only: devices asking for access |
-| `change` | `{id, kind: "library", method, path, by, from, at}` or `{id, kind: "artwork", playlist, version, by}` | Something changed elsewhere: any successful `POST /api/am` write on this computer or on a linked one (favorites, library adds, playlist edits), or a playlist picture set on this computer. `by` = the device that made it (it ignores its own). Clients update hearts/pictures at once and re-read the affected library areas (`store.js onChange`). |
+| `change` | `{id, kind: "library", method, path, by, from, at}` or `{id, kind: "artwork", playlist, version, by}` | Something changed elsewhere: any successful `POST /api/am` write on this computer or on a linked one (favorites, library adds, playlist edits), or a playlist picture set on this computer. `by` = the device that made it (it ignores its own). Clients update hearts/pictures at once and re-read the affected library areas (`store.js onChange`). A favorite (`/v1/me/ratings/…`) redraws nothing but the Favorite Songs page (`favorites-changed`). |
 
 SSE streams also carry `: ping` comments every 15 s and start with `retry: 2000`.
 
