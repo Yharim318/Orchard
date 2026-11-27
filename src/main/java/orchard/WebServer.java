@@ -52,6 +52,7 @@ final class WebServer {
 
     private final Orchard app;
     private final ArtworkStore artwork;
+    private final ArtCache artCache;
     private final HttpServer server;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
@@ -59,6 +60,7 @@ final class WebServer {
     WebServer(Orchard app, String bindAddress, int port, Path dataDir) throws IOException {
         this.app = app;
         this.artwork = new ArtworkStore(dataDir);
+        this.artCache = new ArtCache(dataDir);
         server = HttpServer.create(new InetSocketAddress(bindAddress, port), 64);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/", this::handle);
@@ -112,6 +114,18 @@ final class WebServer {
             return;
         }
         boolean local = isLocal(ex);
+        if (method.equals("GET") && path.equals("/api/img")) {
+            // Apple artwork through the disk cache. Only for the Orchard window on this computer: an <img> can't
+            // send a device key, and phones keep their own browser cache of Apple's images anyway.
+            if (!local) throw new HttpError(403, "The artwork cache is only for the Orchard window on " + app.name());
+            ArtCache.Hit img = artCache.get(q.get("u"));
+            ex.getResponseHeaders().set("Content-Type", img.contentType());
+            ex.getResponseHeaders().set("Cache-Control", "public, max-age=31536000, immutable");
+            ex.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            ex.sendResponseHeaders(200, img.bytes().length);
+            ex.getResponseBody().write(img.bytes());
+            return;
+        }
         String route = method + " " + path;
         if (!local && !PUBLIC.contains(route) && !authorized(ex, q)) {
             sendJson(ex, 401, Json.obj("error", "This device isn't paired with Orchard on " + app.name() + " yet.",

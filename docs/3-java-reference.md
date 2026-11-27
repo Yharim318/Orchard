@@ -83,7 +83,8 @@ so every request gets its own cheap virtual thread and long-lived SSE connection
 | `appleWrite(...)` | `POST /api/am {method, path, body}`: `POST/PUT/DELETE` to Apple via the engine (library adds, ratings, playlists). |
 | `validateApplePath` | Only `/v1/…`, no `..`, no control characters, ≤ 4000 chars. |
 | `transfer(...)` | `POST /api/transfer {to}`: hand playback to a known peer (export queue → POST `load` to peer → pause here). |
-| `staticFile(...)` | Serves `web/…` from the classpath; unknown extensionless paths fall back to `index.html`. `Cache-Control: no-cache`. Content types from the `TYPES` map. **Add a type there** if you add new file kinds. |
+| `GET /api/img` (in `api()`) | Apple artwork for the Orchard window through `ArtCache`; loopback only. |
+| `staticFile(...)` | Serves `web/…` from the classpath; unknown extensionless paths fall back to `index.html`. `Cache-Control: no-cache` plus an `ETag` (CRC32 + length), so repeat visits get `304`. Content types from the `TYPES` map. **Add a type there** if you add new file kinds. |
 | `hostAllowed(host)` | DNS-rebinding protection: only `localhost`, IP literals, `*.local`, `*.ts.net` (Tailscale) or this computer's hostname. |
 | `originAllowed(origin, host)` | Cross-site protection. Allows: same-origin requests (Origin matches Host), our own addresses on our port, and known Orchard peers. Everything else gets 403. |
 | `body`, `query`, `sendJson`, `send` | Small helpers. Request bodies are capped at 1 MiB. |
@@ -94,6 +95,19 @@ so every request gets its own cheap virtual thread and long-lived SSE connection
   from `127.0.0.1` with no `Origin` header. So the same route code serves both the app window and phones.
 - Anything you return is visible to every device on the network that can reach the port. Keep secrets
   (Apple tokens) out of responses.
+
+---
+
+## `ArtCache.java`: artwork on disk
+
+**Responsibility:** keep every Apple picture the Orchard window shows (covers, banners) in `<data>/cache/artwork`,
+so it loads instantly next time, even with a bad or no connection. Never touches music.
+
+| Member | What it does |
+|--------|--------------|
+| `allowed(url)` | Only `https://*.mzstatic.com/…` (no user info, default port): the cache can't be used to fetch anything else. |
+| `get(url)` | Disk hit → bytes (and refresh the file date at most hourly, for the LRU order). Miss → one download per picture however many ask (`loading`), checked to be JPEG/PNG/WebP/GIF, ≤ 20 MB, written via a temp file. Apple's 404 → 404, other failures → 502 (the UI keeps retrying). |
+| `trimIfNeeded()` | Over the limit (`ORCHARD_CACHE_MB`, default 1024): delete the least recently viewed files until 90% of the limit is used. Also runs once at startup after counting the folder. |
 
 ---
 

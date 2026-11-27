@@ -31,6 +31,7 @@ Served by `WebServer` on port 8787. Phones call these directly; the app window c
 | `POST /api/cmd` | a [player command](#player-commands) | player state after the command | |
 | `GET /api/queue?start=&count=` | | `{rev, position, total, start, items[]}`: songs `start…start+count` (at most 500 per request) of the queue, for paging past the window the state carries | |
 | `GET /api/am` | `?path=/v1/...` (URL-encoded) | Apple's JSON body, Apple's status | Catalog paths cached 10 min. |
+| `GET /api/img` | `?u=<https://….mzstatic.com/… image URL>` | the image (`immutable`) | Orchard window only (127.0.0.1; others get 403). Apple artwork through the disk cache (`ArtCache`). Other hosts → 400. |
 | `POST /api/am` | `{method: "POST"|"PUT"|"DELETE", path, body}` | Apple's JSON body, Apple's status | Library edits, ratings, playlists. |
 | `POST /api/signin` | | `{ok:true}` | Shows Apple's page for sign-in (on the computer). |
 | `POST /api/signout` | | `{ok:true}` | MusicKit `unauthorize`; clears the catalog cache. |
@@ -245,6 +246,7 @@ Linux `~/.local/share/orchard`, or `--data`):
 | `browser.log` | The browser's console output (useful when the browser fails to start). |
 | `access.json` | This account's secrets (keyring) and the computers proved to be on the same account. Reset on sign-out. |
 | `auto-update`, `update-installed` | Updater setting and the last installed release file (`Updater.java`). |
+| `cache/artwork/` | Apple artwork the Orchard window has shown (`ArtCache`), one file per picture (SHA-256 of its URL). At most `ORCHARD_CACHE_MB` (default 1024 MB); least recently viewed pictures go first. Safe to delete at any time. |
 | `browser-choice` | Path of the browser Orchard uses. Remembered so the profile (and sign-in) never switches by accident; `--browser` / `ORCHARD_BROWSER` change it. |
 | `browser-profile/` | Profile from early versions. On startup Orchard moves it to `browser-<name>` if it belongs to the same browser and the current one has no Apple sign-in (a replaced profile is renamed `…replaced-<time>`, never deleted). |
 

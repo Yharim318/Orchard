@@ -89,7 +89,7 @@ The hero colour comes from Apple's artwork `bgColor`: `views.setHero()` sets `--
 |--------|---------|
 | `$`, `$$` | `querySelector` / `querySelectorAll` (as array). |
 | `esc(s)` | HTML-escape. **Use for every interpolated value.** |
-| `art(artwork, size)`, `artWide(artwork, width)` | Turn Apple's artwork URL template (`…/{w}x{h}bb.jpg`) into a real URL (square / keeping aspect ratio). `PLACEHOLDER` when missing. |
+| `art(artwork, size)`, `artWide(artwork, width)` | Turn Apple's artwork URL template (`…/{w}x{h}bb.jpg`) into a real URL (square / keeping aspect ratio). `PLACEHOLDER` when missing. In the Orchard window (`?host`), Apple (`mzstatic.com`) URLs become `<ROOT>/api/img?u=…`, the server's disk cache; phones use Apple's URL directly. |
 | `fmtTime(sec)`, `fmtTotal(sec)` | `3:45`, `1 hr 2 min`. |
 | `debounce`, `throttle` | Rate limiting (search box, volume slider). |
 | `toast(msg)` | Bottom notification. |

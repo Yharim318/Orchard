@@ -38,11 +38,20 @@ function safeImageUrl(url) {
   return /^(https:\/\/|\/(?!\/)|data:image\/|blob:)/i.test(url) ? url : null;
 }
 
+// In the Orchard window, Apple's pictures come through the Orchard server's artwork cache (ArtCache.java, up to
+// 1 GB on disk), so anything seen before shows at once even on a bad connection. Phones load them from Apple
+// directly and keep them in their own browser cache. (Same tests as store.js isHostApp / ROOT; util.js can't
+// import store.js, which imports this module.)
+const CACHE_ART = new URLSearchParams(location.search).has('host');
+const ART_ROOT = location.hostname === 'music.apple.com' ? '/orchard' : '';
+const viaCache = (url) => (CACHE_ART && /^https:\/\/[a-z0-9-]+\.mzstatic\.com\//i.test(url)
+  ? `${ART_ROOT}/api/img?u=${encodeURIComponent(url)}` : url);
+
 /** Resolves an Apple artwork template ({w}x{h}) at a given pixel size. */
 export function art(artwork, size = 300) {
   const url = safeImageUrl(typeof artwork === 'string' ? artwork : artwork && artwork.url);
   if (!url) return PLACEHOLDER;
-  return url.replace('{w}', size).replace('{h}', size).replace('{c}', 'bb').replace('{f}', 'jpg');
+  return viaCache(url.replace('{w}', size).replace('{h}', size).replace('{c}', 'bb').replace('{f}', 'jpg'));
 }
 
 /** A CSS colour from Apple's "bgColor" (hex digits), or '' if it is anything else. */
@@ -90,7 +99,7 @@ export function artWide(artwork, width = 1600) {
   const url = safeImageUrl(artwork && artwork.url);
   if (!url) return PLACEHOLDER;
   const h = artwork.width && artwork.height ? Math.round((width * artwork.height) / artwork.width) : width;
-  return url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg');
+  return viaCache(url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg'));
 }
 
 export function fmtTime(sec) {

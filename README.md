@@ -140,6 +140,9 @@ build/orchard                 # or: java -jar build/orchard.jar
 | `--no-update` | Don't update `orchard.exe` from GitHub during this run (also `ORCHARD_NO_UPDATE=1`) |
 | `--version` | Print the version and exit |
 
+Artwork the Orchard window has shown is kept on disk (`<data>/cache/artwork`) so it loads instantly next time,
+up to 1 GB by default; set `ORCHARD_CACHE_MB` to change the limit. The least recently viewed pictures are removed first.
+
 ### Shortcuts
 
 `K` or `Space` play/pause · `J` or `Ctrl/⌘ ←` previous · `L` or `Ctrl/⌘ →` next · `M` mute ·
