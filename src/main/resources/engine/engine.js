@@ -35,6 +35,28 @@
   emit({ type: 'boot', url: location.href });
   window.addEventListener('pagehide', () => emit({ type: 'bye' }));
 
+  // ---------------------------------------------------------------- idle rendering (embedded only)
+  // Embedded, this page has the same origin as the Orchard window, so it runs on that window's main thread. Every
+  // frame that Apple's invisible UI spends on style, layout, paint, animations or motion artwork is a frame the
+  // Orchard UI doesn't get. While the page is hidden, Apple's UI isn't rendered at all. MusicKit and its media
+  // elements play without being rendered. The page renders again as soon as it's shown (sign-in, Ctrl+Shift+A).
+  if (window !== window.top) {
+    try {
+      const hostBody = window.frameElement.ownerDocument.body;
+      const css = document.createElement('style');
+      css.textContent = 'html[data-orchard-idle] body > :not(audio):not(video) { content-visibility: hidden !important; }';
+      const sync = () => {
+        const root = document.documentElement;
+        if (!root) return;
+        if (!css.isConnected) root.appendChild(css); // outside <head>, which Apple's app manages
+        root.toggleAttribute('data-orchard-idle', !hostBody.classList.contains('engine-visible'));
+      };
+      new MutationObserver(sync).observe(hostBody, { attributes: true, attributeFilter: ['class'] });
+      document.addEventListener('readystatechange', sync);
+      sync();
+    } catch (e) { log('idle rendering unavailable', String(e)); }
+  }
+
   // Two shortcuts keep working while this page has keyboard focus: show/hide this page (Ctrl+Shift+A) and the
   // log window (Ctrl+Shift+T), or whatever keys the user chose in Settings. The app window is on this same site,
   // so its saved shortcuts (localStorage 'orchard.keys', see web/js/keys.js) are readable here.

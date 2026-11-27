@@ -289,17 +289,43 @@ function setRange(input, value, max) {
   input.style.setProperty('--p', `${max ? (value / max) * 100 : 0}%`);
 }
 
+const setText = (n, t) => { if (n.textContent !== t) n.textContent = t; };
+
 function tick() {
   const s = S.state;
   const dur = s.duration || (s.item && s.item.duration) || 0;
   const pos = displayPosition();
+  const frac = dur ? Math.min(1, pos / dur) : 0;
   if (!seeking) {
-    document.querySelectorAll('.seek').forEach((r) => setRange(r, dur ? Math.round((pos / dur) * 1000) : 0, 1000));
-    document.querySelectorAll('.t-cur').forEach((n) => { n.textContent = fmtTime(pos); });
+    const value = String(Math.round(frac * 1000));
+    const p = `${(frac * 100).toFixed(3)}%`;
+    document.querySelectorAll('.seek').forEach((r) => {
+      if (r.value !== value) r.value = value;
+      if (r.style.getPropertyValue('--p') !== p) r.style.setProperty('--p', p);
+    });
+    const cur = fmtTime(pos);
+    document.querySelectorAll('.t-cur').forEach((n) => setText(n, cur));
   }
-  document.querySelectorAll('.t-dur').forEach((n) => { n.textContent = fmtTime(dur); });
+  const total = fmtTime(dur);
+  document.querySelectorAll('.t-dur').forEach((n) => setText(n, total));
   const mini = $('.mini-progress i');
-  if (mini) mini.style.width = `${dur ? (pos / dur) * 100 : 0}%`;
+  if (mini) mini.style.transform = `scaleX(${frac.toFixed(5)})`;
+}
+
+// While playing, the progress bars move every frame (smooth at any refresh rate, instead of a step every 250 ms).
+// The interval covers everything else: paused, the window hidden (no frames), state changes.
+let progressFrame = 0;
+function progressLoop() {
+  progressFrame = 0;
+  tick();
+  if (S.state.isPlaying && !document.hidden) progressFrame = requestAnimationFrame(progressLoop);
+}
+function heartbeat() {
+  if (S.state.isPlaying && !document.hidden) {
+    if (!progressFrame) progressFrame = requestAnimationFrame(progressLoop);
+  } else {
+    tick();
+  }
 }
 
 // ------------------------------------------------------------------ controls
@@ -899,13 +925,13 @@ export function initPlayer() {
   rightMode = wide() && (savedRight === 'queue' || savedRight === 'lyrics') ? savedRight : null;
   renderRight();
   subscribe((kind) => {
-    if (kind === 'state' || kind === 'speaker') update();
+    if (kind === 'state' || kind === 'speaker') { update(); heartbeat(); }
     if (kind === 'engine-ui') onEngineUi(S.engineUi || {});
     if (kind === 'state' && S.state.authorized && engineForSignIn) setEngineVisible(false);
     updateOverlay();
   });
   $('#engine-back').addEventListener('click', () => setEngineVisible(false));
-  setInterval(tick, 250);
+  setInterval(heartbeat, 250);
   update();
   updateOverlay();
 }

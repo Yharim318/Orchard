@@ -160,7 +160,7 @@ Inside **`Main.startEngine`**:
 8. **`app.js` → `boot()`** runs:
    1. `buildShell()` fills the sidebar, library header, phone tab bar and the phone's Back button.
    2. `initPlayer()` (`player.js`) builds the player bar, mini player, full-screen player, wires controls,
-      the overlay and the right panel, and starts a 250 ms `tick` timer for the progress bar.
+      the overlay and the right panel, and starts a 250 ms `heartbeat` timer for the progress bar (while playing it runs `tick` every frame).
    3. `bindSidebar()`, `bindGlobalClicks()`, `bindKeys()` attach the global event handlers.
    4. Listens for `hashchange` → `route()` (all navigation is `#/...` hash routing).
    5. Subscribes to store changes: when the engine becomes ready+signed in, reload the library and re-render
@@ -193,7 +193,12 @@ At this point the engine isn't ready yet, so **`player.js` → `updateOverlay`**
    - `sandbox` has no `allow-top-navigation`, so Apple's page can never navigate the Orchard window away.
    - `allow=` grants DRM (`encrypted-media`), autoplay, passkeys and focus to Apple's frame.
    - CSS (`#engine-host` in `app.css`) keeps it full-size but `opacity: 0`, `z-index: -1` and
-     click-through, so it keeps rendering at full speed but is invisible.
+     click-through, so it stays alive but is invisible.
+   - Apple's page is same-origin with the Orchard page, so the two share one main thread. While the frame is
+     hidden, `engine.js` sets `data-orchard-idle` on Apple's `<html>`, and its stylesheet puts
+     `content-visibility: hidden` on everything in Apple's `<body>` except media elements. Apple's UI then costs
+     no style, layout or paint work, and playback is unaffected. Showing the frame (`body.engine-visible`)
+     removes the attribute.
 2. The iframe requests `https://music.apple.com/`. It's an Apple **document**, so the browser pauses it at
    the **response** stage → **`Engine.unblockFraming`**: fetch the body (`Fetch.getResponseBody`), drop
    `X-Frame-Options`, remove `frame-ancestors` from the CSP, drop encoding/length headers (the body is already
@@ -233,7 +238,7 @@ The first report has `ready: true`, so the overlay switches to the sign-in card 
 
 The UI never asks for the position every second. `store.positionNow()` extrapolates from the last
 reported `position` and the time it arrived (`S.stateAt`), and `player.js tick()` redraws the progress bar
-every 250 ms.
+on every animation frame while playing (every 250 ms otherwise). Text only changes when the second changes.
 
 ## Stage 7: Signing in
 
