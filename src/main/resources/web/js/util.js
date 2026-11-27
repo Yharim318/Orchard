@@ -27,12 +27,26 @@ export const PLACEHOLDER = 'data:image/svg+xml,' + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#26262c"/>' +
   '<path d="M64 24v36a11 11 0 1 1-6-9.8V36l-20 5v25a11 11 0 1 1-6-9.8V30z" fill="#4a4a52"/></svg>');
 
+/**
+ * Only image addresses that are safe to paste into HTML attributes and CSS url(): https, our own paths, and data:
+ * or blob: images, without quotes, brackets, parentheses, backslashes or spaces. Artwork can come from another
+ * speaker on the network, so a crafted value must not be able to break out of src="…" (the app window runs as
+ * music.apple.com). Anything else shows the placeholder.
+ */
+function safeImageUrl(url) {
+  if (typeof url !== 'string' || /["'<>()\\\s`]/.test(url)) return null;
+  return /^(https:\/\/|\/(?!\/)|data:image\/|blob:)/i.test(url) ? url : null;
+}
+
 /** Resolves an Apple artwork template ({w}x{h}) at a given pixel size. */
 export function art(artwork, size = 300) {
-  const url = typeof artwork === 'string' ? artwork : artwork && artwork.url;
+  const url = safeImageUrl(typeof artwork === 'string' ? artwork : artwork && artwork.url);
   if (!url) return PLACEHOLDER;
   return url.replace('{w}', size).replace('{h}', size).replace('{c}', 'bb').replace('{f}', 'jpg');
 }
+
+/** A CSS colour from Apple's "bgColor" (hex digits), or '' if it is anything else. */
+export const hexColor = (c) => (typeof c === 'string' && /^[0-9a-f]{3,8}$/i.test(c) ? `#${c}` : '');
 
 /** Markup for a blurred-artwork backdrop (full-screen player, lyrics page and sidebar); drive it with backdrop(). */
 export const BACKDROP = '<div class="fp-bg"><canvas class="fp-bg-art" width="64" height="64"></canvas><canvas class="fp-bg-art" width="64" height="64"></canvas></div>';
@@ -47,7 +61,7 @@ export function backdrop(bg) {
   let shown;
   const [a, b] = bg.querySelectorAll('.fp-bg-art');
   return (item) => {
-    bg.style.setProperty('--fp-color', item && item.bgColor ? `#${item.bgColor}` : '');
+    bg.style.setProperty('--fp-color', item ? hexColor(item.bgColor) : '');
     const url = item && item.artwork ? art(item.artwork, 120) : null; // the size the player bar already loaded
     if (url === shown) return;
     shown = url;
@@ -73,9 +87,10 @@ export function backdrop(bg) {
 
 /** Like art() but keeps the artwork's aspect ratio (for wide banners). */
 export function artWide(artwork, width = 1600) {
-  if (!artwork || !artwork.url) return PLACEHOLDER;
+  const url = safeImageUrl(artwork && artwork.url);
+  if (!url) return PLACEHOLDER;
   const h = artwork.width && artwork.height ? Math.round((width * artwork.height) / artwork.width) : width;
-  return artwork.url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg');
+  return url.replace('{w}', width).replace('{h}', h).replace('{c}', 'bb').replace('{f}', 'jpg');
 }
 
 export function fmtTime(sec) {

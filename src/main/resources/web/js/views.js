@@ -1,5 +1,5 @@
 // Page views: home, search, album, playlist, artist, library, songs, queue, lyrics.
-import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast } from './util.js';
+import { $, esc, art, artWide, fmtTotal, greeting, icon, debounce, store as persist, toast, hexColor } from './util.js';
 import { S, am, sf, subscribe, queuePage } from './store.js';
 import {
   toTrack, toCard, cardHtml, shelf, grid, trackRows, registerList, getList, markPlaying, loading, errorBox,
@@ -15,7 +15,7 @@ const PLACEHOLDER_ART = { url: '' }; // menu header shows the music-note placeho
 const withLimit = (next, n = 100) => next ? (next.includes('limit=') ? next : `${next}${next.includes('?') ? '&' : '?'}limit=${n}`) : null;
 
 export function setHero(color) {
-  $('#main').style.setProperty('--hero', color ? `#${color}` : 'var(--hero-default)');
+  $('#main').style.setProperty('--hero', hexColor(color) || 'var(--hero-default)');
 }
 
 function heroHtml({ artwork, kind, title, meta, round = false, color, mosaic = null, editable = false }) {
@@ -248,7 +248,7 @@ async function album(el, m) {
   const tracks = ((d.relationships && d.relationships.tracks && d.relationships.tracks.data) || []).map(toTrack);
   tracks.forEach((t) => { if (!t.artistId && artistRel && t.artist === a.artistName) t.artistId = artistRel.id; });
   const total = tracks.reduce((s, t) => s + t.duration, 0);
-  const year = a.releaseDate ? a.releaseDate.slice(0, 4) : '';
+  const year = a.releaseDate ? esc(a.releaseDate.slice(0, 4)) : '';
   const artistHtml = artistRel ? `<a href="#/artist/${esc(artistRel.id)}">${esc(a.artistName)}</a>` : esc(a.artistName || '');
   const kind = a.isSingle ? 'Single' : a.isCompilation ? 'Compilation' : 'Album';
   const play = a.playParams ? { [a.playParams.kind || 'album']: a.playParams.id } : { album: id };

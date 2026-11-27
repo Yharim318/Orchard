@@ -3,7 +3,7 @@
 // deleting (DELETE) and removing songs, but not uploading artwork — pictures chosen here are kept by
 // Orchard (see artwork.js) and shown on every device that uses this Orchard.
 import { esc, art, icon, toast } from './util.js';
-import { ROOT, am, amWrite } from './store.js';
+import { ROOT, am, amWrite, orchardFetch } from './store.js';
 import { libraryList, invalidateLibrary, createPlaylist, playlistChanged, rememberPlaylistEdit, rememberPlaylistDelete, withRecentEdits } from './components.js';
 import { playlistArtwork, mosaicFor, hasCustomArtwork, setCustomArtwork, refreshMosaic, dropMosaic } from './artwork.js';
 
@@ -32,7 +32,7 @@ export async function updatePlaylistDetails(p, { name, description: desc }) {
 }
 
 async function artworkRequest(body) {
-  const res = await fetch(`${ROOT}/api/artwork`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await orchardFetch(`${ROOT}/api/artwork`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;

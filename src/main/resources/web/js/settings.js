@@ -1,8 +1,8 @@
 // Settings dialog: keyboard shortcuts (every action, several keys each), how far rewind / fast-forward move, and
 // automatic updates.
 import { esc, icon, toast } from './util.js';
-import { HOST_PROXY } from './store.js';
-import { openDialog } from './playlists.js';
+import { HOST_PROXY, removeAllDevices } from './store.js';
+import { openDialog, confirmDialog } from './playlists.js';
 import { updateSettingsHtml, bindUpdateSettings } from './updates.js';
 import {
   ACTIONS, MAX_KEYS, DEFAULT_STEP, bindings, addBinding, removeBinding, resetBindings, seekStep, setSeekStep,
@@ -24,6 +24,12 @@ export function openSettings() {
       <label class="set-step">Move by <input type="number" min="1" max="600" step="1" inputmode="numeric"> seconds</label>
     </section>
     ${updateSettingsHtml()}
+    ${HOST_PROXY ? `<section class="set-sec">
+      <h3>Paired devices</h3>
+      <p class="set-hint">Only devices allowed here, and computers signed in to the same Apple Music account, can use
+        Orchard. Signing out of Apple Music removes them all too.</p>
+      <div class="set-actions"><button class="btn small" data-unpair>Remove all paired devices</button></div>
+    </section>` : ''}
     <section class="set-sec">
       <h3>Keyboard shortcuts</h3>
       <p class="set-hint">Press <b>+</b> next to an action, then the key or combination you want (Esc cancels).
@@ -84,6 +90,14 @@ export function openSettings() {
     const rm = e.target.closest('[data-remove]');
     if (rm) { removeBinding(rm.dataset.remove, rm.dataset.combo); draw(); return; }
     if (recording && !e.target.closest('.key-chip.rec')) { recording = null; draw(); }
+    if (e.target.closest('[data-unpair]')) {
+      confirmDialog({
+        title: 'Remove all paired devices?',
+        body: 'Every phone and browser will have to be allowed again, and other computers will check the Apple Music account again.',
+        ok: 'Remove all', danger: true,
+      }).then((yes) => yes && removeAllDevices().then(() => toast('All paired devices removed'), (err) => toast(err.message)));
+      return;
+    }
     if (e.target.closest('[data-reset]')) { resetBindings(); recording = null; draw(); toast('Settings reset'); }
   });
   const commitStep = () => {

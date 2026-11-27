@@ -16,6 +16,8 @@ on:
         description: 'Version to release, e.g. 0.2.0 (must be higher than the last release)'
         required: true
 
+# Third-party actions are pinned to exact commits: every Orchard installs what this workflow builds, so a
+# moved tag must not be able to change it.
 permissions:
   contents: write
 
@@ -27,9 +29,11 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: graalvm/setup-graalvm@v1
+      - uses: graalvm/setup-graalvm@60e76998d25690099182b796e99b8804da582d90 # v1
         with:
           java-version: '21'
           distribution: 'graalvm'
@@ -70,7 +74,7 @@ jobs:
           Write-Host "orchard.exe --version: $got"
 
       - name: Publish the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Orchard ${{ steps.version.outputs.version }}

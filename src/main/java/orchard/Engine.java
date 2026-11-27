@@ -310,6 +310,10 @@ final class Engine {
         try {
             String rest = url.substring(ORCHARD_PREFIX.length());
             if (rest.isEmpty() || rest.startsWith("?")) rest = "/" + rest;
+            if (!rest.startsWith("/")) { // e.g. /orchardX or /orchard@host: not Orchard's
+                fulfill(requestId, session, 404, "text/plain", "Not found".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             Map<String, Object> headers = Json.map(request.get("headers"));
             String method = String.valueOf(Json.str(request, "method"));
             String body = Json.str(request, "postData");

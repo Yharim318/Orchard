@@ -5,7 +5,7 @@
 // Any <img data-mosaic="p.…"> on the page is filled in automatically once its mosaic is ready: the ones on
 // screen first, then the rest of the library in the background. Mosaics are kept in IndexedDB, so they show
 // at once on the next start.
-import { ROOT, am } from './store.js';
+import { ROOT, am, orchardFetch } from './store.js';
 import { art, PLACEHOLDER } from './util.js';
 
 const enc = encodeURIComponent;
@@ -90,7 +90,7 @@ async function readMosaicCache() {
 
 export async function loadCustomArtwork() {
   try {
-    const r = await fetch(`${ROOT}/api/artwork`);
+    const r = await orchardFetch(`${ROOT}/api/artwork`);
     if (!r.ok) return;
     const { items } = await r.json();
     custom.clear();

@@ -166,6 +166,23 @@
     };
   }
 
+  /**
+   * The playback position to the millisecond. MusicKit's currentPlaybackTime is rounded to whole seconds (its
+   * TimingAccuracy class, unless Apple turns on "player-accurate-timing"), which made every report up to half a
+   * second off in a different direction, so the lyrics jumped back and forth across line changes. The media
+   * element playing the song knows the exact time; it is used when it agrees with MusicKit (same song).
+   */
+  function precisePosition(m) {
+    const rough = m.currentPlaybackTime || 0;
+    let best = null;
+    for (const el of media) {
+      const t = el.currentTime;
+      if (!Number.isFinite(t) || Math.abs(t - rough) > 1.5) continue;
+      if (!best || (best.paused && !el.paused)) best = el;
+    }
+    return best ? best.currentTime : rough;
+  }
+
   function snapshot(full) {
     const m = mk;
     const s = {
@@ -174,7 +191,7 @@
       storefront: m.storefrontId || m.storefrontCountryCode || 'us',
       playbackState: m.playbackState,
       isPlaying: !!m.isPlaying,
-      position: m.currentPlaybackTime || 0,
+      position: precisePosition(m),
       duration: m.currentPlaybackDuration || 0,
       volume: typeof m.volume === 'number' ? m.volume : 1,
       shuffle: m.shuffleMode ? 1 : 0,
@@ -423,7 +440,8 @@
       headers['Media-User-Token'] = m.musicUserToken;
       headers['Music-User-Token'] = m.musicUserToken;
     }
-    const init = { method: method || 'GET', headers };
+    // Library reads must be current (e.g. Orchard waits for a pairing playlist to appear), never browser-cached.
+    const init = { method: method || 'GET', headers, cache: path.startsWith('/v1/me/') ? 'no-store' : 'default' };
     if (body != null) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);

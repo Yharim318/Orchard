@@ -310,6 +310,35 @@ running PowerShell `Get-Content -Wait`.
 
 ---
 
+## `Access.java`: who may use this Orchard
+
+**Responsibility:** keys for paired devices and linked computers. Requests from this computer (127.0.0.1, including
+the Orchard window) are always trusted. Every other `/api` caller needs a key (see "Keys" in
+[5-protocols.md](5-protocols.md)).
+
+| Member | What it does |
+|--------|--------------|
+| `keyFor(deviceId)`, `valid(deviceId, key)` | Make a key with the primary secret / check one against every secret in the keyring (constant-time). |
+| `invite()`, `claim(code, deviceId)` | QR invites (10 min, reused while fresh) and trading one for a key. |
+| `request(...)`, `requestStatus(id, secret)`, `pending()`, `decide(id, allow)` | "Ask for access": max 8 waiting, 5 min each; only the asking device (holding `secret`) can collect the key. |
+| `exportKeys()`, `merge(keys)`, `markLinked`/`isLinked`/`unlink` | Used by `AccountLink` when another computer proves it's on the same account. |
+| `reset(why)` | New secret, nothing linked. Called on Apple Music sign-out (`Orchard.signedOut`, also after 30 s signed out in Apple's page) and by Settings > Paired devices. |
+
+---
+
+## `AccountLink.java`: proving the same Apple Music account
+
+**Responsibility:** links two Orchard computers only if both are signed in to the same Apple Music account, with
+Apple's library as the witness. An X25519 key exchange gives both sides K. Each side adds a private playlist named
+`Orchard pairing <HMAC(K, its id)>`, and the other side must find that name in *its own* library. Only then are the
+keyrings swapped, AES-GCM-encrypted with K, and the playlists deleted. Someone relaying the messages ends up with a
+different K on each side, so the playlist names don't match. The class doc comment has the step-by-step.
+`start()` tries every unlinked computer heard on the network (the lower id first, at most once per 10 minutes) and
+re-checks linked ones every 2 minutes (`GET /api/access` with our key). Production `Library` = Apple's API through
+the engine; `Transport` = HTTP. Both are interfaces so the handshake can be tested without Apple.
+
+---
+
 ## `Updater.java`: automatic updates
 
 **Responsibility:** keeps a release-built `orchard.exe` in step with the newest GitHub release of `Updater.REPO`

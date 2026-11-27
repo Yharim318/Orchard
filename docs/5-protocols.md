@@ -35,13 +35,30 @@ Served by `WebServer` on port 8787. Phones call these directly; the app window c
 | `POST /api/signin` | | `{ok:true}` | Shows Apple's page for sign-in (on the computer). |
 | `POST /api/signout` | | `{ok:true}` | MusicKit `unauthorize`; clears the catalog cache. |
 | `POST /api/engine-window` | | `{ok:true}` | Toggles Apple's page (same as Ctrl+Shift+A). |
-| `POST /api/transfer` | `{to: "http://ip:port"}` | `{ok:true, speaker}` | Hand playback to a known peer and pause here. |
+| `POST /api/transfer` | `{to: "http://ip:port"}` | `{ok:true, speaker}` | Hand playback to a linked computer and pause here. |
+| `GET /api/update`, `POST /api/update` | `{enabled}` / `{action:"check"\|"restart"}` | updater status | See `Updater.java`. |
+| `GET /api/access` | | `{paired, local, signedIn, name}` | Whether the caller's key works here. No key needed. |
+| `POST /api/pair/request` | `{deviceId, name, kind}` | `{id, secret}` | A device asks for access; the Orchard window shows Allow / Deny. No key needed. |
+| `GET /api/pair/status` | `?id=&secret=` | `{status: pending\|approved\|denied\|expired, key?}` | The asking device collects its key. No key needed. |
+| `POST /api/pair/claim` | `{code, deviceId, name}` | `{deviceId, key}` | Trades a QR invite code for a key. No key needed. |
+| `POST /api/pair/invite` | | `{code, expires}` | **This computer only.** The invite in the QR code (10 min). |
+| `GET /api/pair/pending`, `POST /api/pair/decide` | `{id, allow}` | | **This computer only.** Requests waiting for an answer; answer one. |
+| `POST /api/pair/reset` | | `{ok:true}` | **This computer only.** Forget every paired device and linked computer. |
+| `POST /api/link/start`, `/proved`, `/finish` | see `AccountLink.java` | | Two computers proving they share the Apple Music account. No key needed. |
 | `OPTIONS *` | | 204 | CORS preflight (for allowed origins). |
 | `GET /anything-else` | | file from `web/` | Unknown extensionless paths → `index.html`. |
 
 **Access rules** (`WebServer.hostAllowed` / `originAllowed`): Host header must be `localhost`, an IP, `*.local`,
 `*.ts.net` or this computer's name; if an `Origin` header is present it must be the same origin as the Host,
 one of our own addresses on our port, or a known Orchard peer.
+
+**Keys** (`Access.java`): every `/api` request that doesn't come from this computer (127.0.0.1, which includes the
+Orchard window) needs `X-Orchard-Device: <deviceId>` and `X-Orchard-Key: <key>` headers (event streams:
+`?deviceId=&key=`), except the "no key needed" rows above and `GET /api/artwork/<id>` images. A key is
+base64url(HMAC-SHA256(secret, "orchard-device-v1:" + deviceId)) under any secret in this computer's keyring
+(`<data>/access.json`). Linked computers merge keyrings, so keys work on all of them. Orchard computers call each
+other as device `pc:<speaker id>`. Without a valid key the answer is `401 {"error", "pair": true}`, and the UI shows
+the pairing screen (`pairing.js`).
 
 ---
 
@@ -58,6 +75,7 @@ app window. Handled by the `handlers` table in `store.js`.
 | `speakers` | `[{id, name, url, self}]` | On connect and when discovery changes |
 | `engine-ui` | `{show: true|false}` or `{toggle: true}` | Show/hide Apple's page in the app window |
 | `relay-lost` | `{}` | App window only: lost the connection to another speaker |
+| `pair-requests` | `[{id, name, kind}]` | Orchard window on this computer only: devices asking for access |
 
 SSE streams also carry `: ping` comments every 15 s and start with `retry: 2000`.
 
@@ -225,6 +243,8 @@ Linux `~/.local/share/orchard`, or `--data`):
 | `speaker-id` | This computer's speaker UUID. |
 | `browser-<name>/` | The browser profile Orchard uses (e.g. `browser-brave`). Holds your Apple sign-in. Delete it to sign out completely / reset the browser. Contains `DevToolsActivePort` while running. |
 | `browser.log` | The browser's console output (useful when the browser fails to start). |
+| `access.json` | This account's secrets (keyring) and the computers proved to be on the same account. Reset on sign-out. |
+| `auto-update`, `update-installed` | Updater setting and the last installed release file (`Updater.java`). |
 | `browser-choice` | Path of the browser Orchard uses. Remembered so the profile (and sign-in) never switches by accident; `--browser` / `ORCHARD_BROWSER` change it. |
 | `browser-profile/` | Profile from early versions. On startup Orchard moves it to `browser-<name>` if it belongs to the same browser and the current one has no Apple sign-in (a replaced profile is renamed `…replaced-<time>`, never deleted). |
 
@@ -235,6 +255,7 @@ phone's is `http://<ip>:8787`). Keys saved as `juice.*` before the rename are co
 | Key | Contents | Written by |
 |-----|----------|------------|
 | `orchard.deviceId` | Random id for this UI | `store.deviceId` |
+| `orchard.key` | This device's key (phones and other browsers; not the Orchard window) | `store.setDeviceKey` |
 | `orchard.deviceName` | Optional custom device name (set manually in DevTools) | (read by `store.deviceName`) |
 | `orchard.speaker` | `''` or the URL of the speaker being controlled | `store.useSpeaker` |
 | `orchard.recentSearches` | Up to 10 search terms | `views.searchRun` |

@@ -29,6 +29,10 @@ final class Orchard {
     private Hub hub;
     private Discovery discovery;
     private Updater updater;
+    private Access access;
+    private AccountLink link;
+    private volatile boolean wasAuthorized;
+    private volatile long signedOutSince;
 
     Orchard(String id, String name, int port, boolean lan) {
         this.id = id;
@@ -40,6 +44,65 @@ final class Orchard {
     void init(Hub hub, Discovery discovery) {
         this.hub = hub;
         this.discovery = discovery;
+    }
+
+    void setAccess(Access a, AccountLink l) {
+        access = a;
+        link = l;
+    }
+
+    Access access() {
+        return access;
+    }
+
+    AccountLink link() {
+        return link;
+    }
+
+    String id() {
+        return id;
+    }
+
+    String name() {
+        return name;
+    }
+
+    /** True while this computer is signed in to Apple Music (needed before devices can be paired or linked). */
+    boolean signedIn() {
+        Engine e = engine;
+        return e != null && Boolean.TRUE.equals(e.snapshot().get("authorized"));
+    }
+
+    /**
+     * Watches the engine state for a sign-out: once Apple Music has stayed signed out for 30 s (not just reloading),
+     * every paired device and linked computer loses access, since they belonged to the account that was here.
+     */
+    void observeSignIn(Map<String, Object> state) {
+        boolean ready = Boolean.TRUE.equals(state.get("ready"));
+        if (Boolean.TRUE.equals(state.get("authorized"))) {
+            wasAuthorized = true;
+            signedOutSince = 0;
+            return;
+        }
+        if (!ready || !wasAuthorized || signedOutSince != 0) return;
+        long since = System.currentTimeMillis();
+        signedOutSince = since;
+        Thread.startVirtualThread(() -> {
+            try {
+                Thread.sleep(30_000);
+            } catch (InterruptedException e) {
+                return;
+            }
+            if (signedOutSince == since && !signedIn()) signedOut();
+        });
+    }
+
+    /** Signed out of Apple Music (here or in Apple's page): forget every device and computer. */
+    void signedOut() {
+        wasAuthorized = false;
+        signedOutSince = 0;
+        if (access != null) access.reset("signed out of Apple Music");
+        if (hub != null) hub.dropRemote();
     }
 
     void setUpdater(Updater u) {
@@ -116,15 +179,34 @@ final class Orchard {
                 "lanUrls", urls, "remotes", remotes);
     }
 
-    /** This speaker plus every other Orchard speaker discovered on the LAN. */
+    /** This speaker plus every other Orchard computer on the network that proved it uses the same Apple Music account. */
     List<Map<String, Object>> speakers() {
         List<Map<String, Object>> out = new ArrayList<>();
         out.add(self());
-        if (discovery != null) {
-            for (Discovery.Peer p : discovery.peers()) {
-                out.add(Json.obj("id", p.id(), "name", p.name(), "url", p.url(), "self", false));
-            }
+        for (Discovery.Peer p : linkedPeers()) {
+            out.add(Json.obj("id", p.id(), "name", p.name(), "url", p.url(), "self", false));
         }
         return out;
+    }
+
+    /** Computers heard on the network that are linked (same Apple Music account). */
+    List<Discovery.Peer> linkedPeers() {
+        List<Discovery.Peer> out = new ArrayList<>();
+        if (discovery == null || access == null) return out;
+        for (Discovery.Peer p : discovery.peers()) if (access.isLinked(p.id())) out.add(p);
+        return out;
+    }
+
+    /** A linked computer by its address, or null (unknown, or not proved to be on this account). */
+    Discovery.Peer linkedPeer(String url) {
+        if (discovery == null || access == null || url == null) return null;
+        Discovery.Peer p = discovery.peerByUrl(url);
+        return p != null && access.isLinked(p.id()) ? p : null;
+    }
+
+    /** Adds this computer's key to a request to another Orchard computer. */
+    java.net.http.HttpRequest.Builder authorize(java.net.http.HttpRequest.Builder b) {
+        String device = "pc:" + id;
+        return b.header(Access.DEVICE_HEADER, device).header(Access.KEY_HEADER, access.keyFor(device));
     }
 }

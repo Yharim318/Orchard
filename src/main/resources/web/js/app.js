@@ -9,6 +9,7 @@ import { routes, libraryRow } from './views.js';
 import { initPlayer, closeDevices, toggleEngine, hasEngineFrame, playerAction } from './player.js';
 import { openSettings } from './settings.js';
 import { initUpdates } from './updates.js';
+import { initPairing } from './pairing.js';
 import { comboOf, actionFor, firstKey } from './keys.js';
 import { initShelves } from './shelves.js';
 import { initVerticalBars } from './scrollbars.js';
@@ -344,6 +345,7 @@ function bindKeys() {
 
 async function boot() {
   buildShell();
+  initPairing();
   initUpdates();
   initPlayer();
   initShelves();
@@ -366,7 +368,7 @@ async function boot() {
   // Saved mosaics usually load in a few ms; don't hold up startup if the browser's storage is slow.
   await Promise.all([loadCustomArtwork(), Promise.race([loadMosaicCache(), new Promise((r) => setTimeout(r, 250))])]);
   try {
-    await init();
+    if (!(await init())) return; // not paired yet: pairing.js shows "Waiting for access"
   } catch (e) {
     $('#view').innerHTML = `<div class="empty"><h3>Can't connect</h3><p>${esc(e.message)}</p></div>`;
     return;

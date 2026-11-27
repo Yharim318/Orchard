@@ -85,7 +85,7 @@ final class WebServer {
             if (method.equals("OPTIONS")) {
                 Headers h = ex.getResponseHeaders();
                 h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                h.set("Access-Control-Allow-Headers", "Content-Type");
+                h.set("Access-Control-Allow-Headers", "Content-Type, " + Access.DEVICE_HEADER + ", " + Access.KEY_HEADER);
                 h.set("Access-Control-Max-Age", "600");
                 ex.sendResponseHeaders(204, -1);
                 return;
@@ -107,14 +107,104 @@ final class WebServer {
     private void api(HttpExchange ex, String method, String path) throws Exception {
         Map<String, String> q = query(ex.getRequestURI());
         if (method.equals("GET") && path.startsWith("/api/artwork/")) {
-            artworkImage(ex, path.substring("/api/artwork/".length()));
+            artworkImage(ex, path.substring("/api/artwork/".length())); // <img> can't send a key; ids aren't secret
             return;
         }
+        boolean local = isLocal(ex);
+        String route = method + " " + path;
+        if (!local && !PUBLIC.contains(route) && !authorized(ex, q)) {
+            sendJson(ex, 401, Json.obj("error", "This device isn't paired with Orchard on " + app.name() + " yet.",
+                    "pair", true));
+            return;
+        }
+        if (LOCAL_ONLY.contains(route) && !local) throw new HttpError(403, "Only the Orchard window on " + app.name() + " can do that.");
+        switch (route) {
+            case "GET /api/access" -> sendJson(ex, 200, Json.obj("paired", local || authorized(ex, q), "local", local,
+                    "signedIn", app.signedIn(), "name", app.name()));
+            case "POST /api/pair/request" -> {
+                requireSignedIn();
+                throttle(ex, "pair", 5_000);
+                Map<String, Object> b = body(ex);
+                sendJson(ex, 200, app.access().request(Json.str(b, "deviceId"), Json.str(b, "name"), Json.str(b, "kind")));
+            }
+            case "GET /api/pair/status" -> sendJson(ex, 200, app.access().requestStatus(q.get("id"), q.get("secret")));
+            case "POST /api/pair/claim" -> {
+                requireSignedIn();
+                throttle(ex, "claim", 1_000);
+                Map<String, Object> b = body(ex);
+                String deviceId = Json.str(b, "deviceId");
+                String key = app.access().claim(Json.str(b, "code"), deviceId);
+                if (key == null) throw new HttpError(403, "That QR code has expired. Scan the one in the Orchard window again, or ask for access.");
+                Log.info("Paired " + Json.str(b, "name") + " (QR code).");
+                sendJson(ex, 200, Json.obj("deviceId", deviceId, "key", key));
+            }
+            case "POST /api/pair/invite" -> {
+                requireSignedIn();
+                sendJson(ex, 200, app.access().invite());
+            }
+            case "GET /api/pair/pending" -> sendJson(ex, 200, app.access().pending());
+            case "POST /api/pair/decide" -> {
+                Map<String, Object> b = body(ex);
+                app.access().decide(Json.str(b, "id"), Json.bool(b, "allow"));
+                sendJson(ex, 200, Json.obj("ok", true));
+            }
+            case "POST /api/pair/reset" -> {
+                app.access().reset("all devices removed in Settings");
+                app.hub().dropRemote();
+                sendJson(ex, 200, Json.obj("ok", true));
+            }
+            case "POST /api/link/start", "POST /api/link/proved", "POST /api/link/finish" -> {
+                if (path.endsWith("/start")) throttle(ex, "link", 3_000);
+                sendJson(ex, 200, app.link().handle(path, body(ex)));
+            }
+            default -> routes(ex, method, path, q);
+        }
+    }
+
+    /** Asked without a key: what a device needs to get one (and the computers' account check). */
+    private static final Set<String> PUBLIC = Set.of("GET /api/info", "GET /api/access", "POST /api/pair/request",
+            "GET /api/pair/status", "POST /api/pair/claim", "POST /api/link/start", "POST /api/link/proved",
+            "POST /api/link/finish");
+    /** Only the signed-in computer itself (the Orchard window) decides who gets in. */
+    private static final Set<String> LOCAL_ONLY = Set.of("POST /api/pair/invite", "GET /api/pair/pending",
+            "POST /api/pair/decide", "POST /api/pair/reset");
+
+    private static boolean isLocal(HttpExchange ex) {
+        InetSocketAddress remote = ex.getRemoteAddress();
+        return remote != null && remote.getAddress() != null && remote.getAddress().isLoopbackAddress();
+    }
+
+    /** The request carries a paired device's key (headers, or query parameters for event streams). */
+    private boolean authorized(HttpExchange ex, Map<String, String> q) {
+        Headers h = ex.getRequestHeaders();
+        String device = h.getFirst(Access.DEVICE_HEADER);
+        String key = h.getFirst(Access.KEY_HEADER);
+        if (device == null) device = q.get("deviceId");
+        if (key == null) key = q.get("key");
+        return app.access().valid(device, key);
+    }
+
+    private void requireSignedIn() {
+        if (!app.signedIn()) throw new HttpError(409, "Sign in to Apple Music in Orchard on " + app.name() + " first.");
+    }
+
+    private final Map<String, Long> lastHit = new ConcurrentHashMap<>();
+
+    /** At most one such request per address every {@code ms} (pairing requests, link attempts). */
+    private void throttle(HttpExchange ex, String what, long ms) {
+        String who = what + " " + ex.getRemoteAddress().getAddress().getHostAddress();
+        long now = System.currentTimeMillis();
+        Long last = lastHit.put(who, now);
+        if (lastHit.size() > 2000) lastHit.clear();
+        if (last != null && now - last < ms) throw new HttpError(429, "Too many requests; try again in a moment.");
+    }
+
+    private void routes(HttpExchange ex, String method, String path, Map<String, String> q) throws Exception {
         switch (method + " " + path) {
             case "GET /api/info" -> sendJson(ex, 200, app.info());
             case "GET /api/state" -> sendJson(ex, 200, app.state());
             case "GET /api/speakers" -> sendJson(ex, 200, app.speakers());
-            case "GET /api/events" -> events(ex, q);
+            case "GET /api/events" -> events(ex, q, isLocal(ex));
             case "POST /api/cmd" -> sendJson(ex, 200, app.engine().command(body(ex)));
             case "GET /api/queue" -> sendJson(ex, 200, app.engine().queueItems(
                     intQuery(q, "start", 0), intQuery(q, "count", 200)));
@@ -129,6 +219,7 @@ final class WebServer {
             case "POST /api/signout" -> {
                 app.engine().signOut();
                 cache.clear();
+                app.signedOut(); // every paired device and linked computer belonged to that account
                 sendJson(ex, 200, Json.obj("ok", true));
             }
             case "POST /api/engine-window" -> {
@@ -153,7 +244,7 @@ final class WebServer {
 
     // ------------------------------------------------------------------ endpoints
 
-    private void events(HttpExchange ex, Map<String, String> q) throws IOException, InterruptedException {
+    private void events(HttpExchange ex, Map<String, String> q, boolean local) throws IOException, InterruptedException {
         String deviceId = limit(q.getOrDefault("deviceId", "unknown"), 64);
         String name = limit(q.getOrDefault("name", "Browser"), 60);
         String kind = limit(q.getOrDefault("kind", "browser"), 20);
@@ -165,7 +256,9 @@ final class WebServer {
         try (OutputStream out = ex.getResponseBody()) {
             out.write("retry: 2000\n\n".getBytes(StandardCharsets.UTF_8));
             out.flush();
-            app.hub().serve(new Hub.SseClient(deviceId, name, kind, out));
+            Hub.SseClient client = new Hub.SseClient(deviceId, name, kind, out);
+            client.local = local;
+            app.hub().serve(client);
         }
     }
 
@@ -252,11 +345,11 @@ final class WebServer {
     /** Hands playback to another Orchard speaker on the network, then pauses here. */
     private void transfer(HttpExchange ex, Map<String, Object> req) throws Exception {
         String to = Json.str(req, "to");
-        Discovery.Peer peer = to == null ? null : app.discovery().peerByUrl(to);
+        Discovery.Peer peer = app.linkedPeer(to);
         if (peer == null) throw new HttpError(400, "Unknown speaker");
         Map<String, Object> load = app.engine().exportQueue();
         load.put("type", "load");
-        HttpRequest request = HttpRequest.newBuilder(URI.create(peer.url() + "/api/cmd"))
+        HttpRequest request = app.authorize(HttpRequest.newBuilder(URI.create(peer.url() + "/api/cmd")))
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(Json.write(load)))

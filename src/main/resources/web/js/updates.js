@@ -1,13 +1,13 @@
 // Automatic updates of orchard.exe (see Updater.java): the Settings section and the "Restart to update" button.
 // Always talks to the Orchard computer that served this page, never to a speaker this page is controlling.
 import { $, esc, icon, toast } from './util.js';
-import { ROOT } from './store.js';
+import { ROOT, orchardFetch } from './store.js';
 
 let status = null;
 const listeners = new Set();
 
 async function request(method, body) {
-  const res = await fetch(`${ROOT}/api/update`, method === 'GET' ? {} : {
+  const res = await orchardFetch(`${ROOT}/api/update`, method === 'GET' ? {} : {
     method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => null);

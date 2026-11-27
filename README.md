@@ -151,8 +151,17 @@ it · right-click a track/album/playlist for more.
 
 ## Security notes
 
-- The server listens on your LAN so phones can connect. Anyone on the same network can control playback and
-  browse your library through it, as with Spotify Connect. Use `--local` on untrusted networks.
+- Only devices that belong to the Apple Music account signed in on the computer can use it:
+  - **Phones and browsers** must be paired once. Either scan the QR code under the devices button in the Orchard
+    window (it carries a 10-minute invite), or open the address, then click **Allow** in the Orchard window on
+    that computer.
+  - **Other Orchard computers** prove they're signed in to the same Apple Music account. Each one briefly adds a
+    private "Orchard pairing …" playlist to the library, which the other side must see in *its* library, and then
+    deletes it. Linked computers share their keys, so a phone paired with one works with all of them.
+  - **Signing out of Apple Music** (or Settings > Paired devices > Remove all) forgets every paired phone and
+    linked computer.
+- The connection between devices is plain HTTP. Someone actively snooping on the same Wi-Fi could copy a paired
+  device's key. Use `--local` on networks you don't trust.
 - Browser requests from other websites are rejected (Origin check), and requests addressed to unexpected host
   names are rejected (DNS-rebinding protection). Apple tokens never leave the Apple Music page.
 

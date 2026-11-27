@@ -28,7 +28,8 @@ function notify(kind) {
   }
 }
 
-export const sf = () => S.state.storefront || 'us';
+// Goes into Apple API paths; another speaker supplies it, so only a two-letter country code is accepted.
+export const sf = () => (/^[a-z]{2}$/i.test(S.state.storefront || '') ? S.state.storefront.toLowerCase() : 'us');
 
 /** Current playback position, interpolated between server updates. */
 export function positionNow() {
@@ -37,6 +38,23 @@ export function positionNow() {
   if (s.isPlaying) p += (performance.now() - S.stateAt) / 1000;
   const d = s.duration || (s.item && s.item.duration) || 0;
   return d ? Math.min(p, d) : p;
+}
+
+let shown = { item: null, pos: 0 };
+
+/**
+ * positionNow() for what's on screen (progress bars, lyrics). Each report from the speaker restarts the estimate
+ * and can land a little behind it (delivery takes a moment); stepping back by that fraction of a second made the
+ * lyrics flick back to the previous line and forward again. While playing, small backward steps are held until
+ * the clock catches up; real jumps (a seek, another song) show at once.
+ */
+export function displayPosition() {
+  const s = S.state;
+  const p = positionNow();
+  const item = s.item ? s.item.id : null;
+  if (s.isPlaying && item === shown.item && p < shown.pos && shown.pos - p < 1.5) return shown.pos;
+  shown = { item, pos: p };
+  return p;
 }
 
 // ------------------------------------------------------------------ device identity
@@ -71,10 +89,36 @@ export function deviceName() {
   return `${os} · ${br}`;
 }
 
+// ------------------------------------------------------------------ access (pairing)
+
+// Orchard only answers devices paired by the Apple Music account signed in on that computer (see Access.java).
+// The Orchard window on that computer needs no key. Other devices get one by scanning the QR code in the Orchard
+// window, or by asking and being allowed there; it works with every computer linked to the same account.
+const KEY_STORE = 'orchard.key';
+
+export const deviceKey = () => (HOST_PROXY ? null : persist(KEY_STORE));
+
+export function setDeviceKey(key) {
+  persist(KEY_STORE, key || '');
+}
+
+/** Headers that identify this device to an Orchard computer (nothing in the Orchard window itself). */
+export function authHeaders(headers = {}) {
+  const key = deviceKey();
+  return key ? { ...headers, 'X-Orchard-Device': deviceId(), 'X-Orchard-Key': key } : headers;
+}
+
+/** fetch() to an Orchard computer with this device's key. */
+export const orchardFetch = (url, opts = {}) => fetch(url, { ...opts, headers: authHeaders(opts.headers) });
+
 // ------------------------------------------------------------------ HTTP
 
 async function http(url, opts = {}) {
-  const res = await fetch(url, opts);
+  const res = await orchardFetch(url, opts);
+  if (res.status === 401 && !HOST_PROXY) {
+    // Not (or no longer) paired: e.g. the computer signed out of Apple Music, which forgets every device.
+    if (!S.unpaired) { S.unpaired = true; notify('unpaired'); }
+  }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
@@ -243,11 +287,15 @@ function setState(s) {
 let es = null;
 let failures = 0;
 
+// A speaker address must be http://<IP>:<port>: speaker lists can be relayed from another speaker, and the address
+// is where this page then sends commands and opens its event stream.
+const SPEAKER_URL = /^http:\/\/(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:.]+\]):\d{1,5}$/i;
+
 export function normalizeSpeakers(list) {
-  return (list || []).map((sp) => ({
+  return (Array.isArray(list) ? list : []).filter((sp) => sp && typeof sp === 'object').map((sp) => ({
     ...sp,
-    base: S.info && sp.id === S.info.id ? '' : sp.self ? S.speakerBase : sp.url,
-  }));
+    base: S.info && sp.id === S.info.id ? '' : sp.self ? S.speakerBase : SPEAKER_URL.test(sp.url || '') ? sp.url : null,
+  })).filter((sp) => sp.base !== null);
 }
 
 const handlers = {
@@ -261,6 +309,7 @@ const handlers = {
   devices: (d) => { S.devices = d; notify('devices'); },
   speakers: (d) => { S.speakers = normalizeSpeakers(d); notify('speakers'); },
   'engine-ui': (d) => { S.engineUi = d; notify('engine-ui'); },
+  'pair-requests': (d) => { S.pairRequests = Array.isArray(d) ? d : []; notify('pair-requests'); },
   'relay-lost': () => {
     toast('Lost the other speaker — switching back to this one');
     useSpeaker('');
@@ -295,11 +344,14 @@ export function connect() {
     }).catch((e) => toast(`Can't connect: ${e.message}`));
     return;
   }
-  es = new EventSource(`${base}/api/events?${new URLSearchParams(device)}`);
+  // EventSource can't send headers: the key goes in the query string.
+  const key = deviceKey();
+  es = new EventSource(`${base}/api/events?${new URLSearchParams(key ? { ...device, key } : device)}`);
   for (const [event, h] of Object.entries(handlers)) {
     if (event !== 'relay-lost') es.addEventListener(event, (e) => h(JSON.parse(e.data)));
   }
   es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED) checkAccess(base); // refused (401): maybe no longer paired
     S.connected = false;
     notify('connection');
     failures++;
@@ -334,9 +386,63 @@ export async function selectSpeaker(sp) {
   useSpeaker(sp.base);
 }
 
+/** After a refused event stream: if this device isn't paired any more, show the pairing screen. */
+async function checkAccess(base) {
+  try {
+    const a = await http(`${base || ROOT}/api/access`);
+    if (a && !a.paired && !S.unpaired) { S.unpaired = true; notify('unpaired'); }
+  } catch (e) { /* unreachable: the usual reconnect handling applies */ }
+}
+
+/** Opened from the QR code in the Orchard window (…/?pair=CODE): trade the code for this device's key. */
+async function claimInvite() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('pair');
+  if (!code || HOST_PROXY) return;
+  params.delete('pair');
+  history.replaceState(history.state, '', `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`);
+  try {
+    const r = await http(ROOT + '/api/pair/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, deviceId: deviceId(), name: deviceName(), kind: deviceKind() }),
+    });
+    if (r && r.key) setDeviceKey(r.key);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
 export async function init() {
   S.info = await http(ROOT + '/api/info');
+  await claimInvite();
+  if (!HOST_PROXY) {
+    const a = await http(ROOT + '/api/access');
+    if (!a.paired) {
+      S.unpaired = true;
+      notify('unpaired');
+      return false;
+    }
+  }
   const saved = persist('orchard.speaker');
   S.speakerBase = typeof saved === 'string' ? saved : '';
   connect();
+  return true;
 }
+
+/** Ask the Orchard computer for access; resolves to { id, secret } (see pairing.js). */
+export const requestAccess = () => http(ROOT + '/api/pair/request', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ deviceId: deviceId(), name: deviceName(), kind: deviceKind() }),
+});
+
+export const accessStatus = (id, secret) => http(`${ROOT}/api/pair/status?${new URLSearchParams({ id, secret })}`);
+
+// The Orchard window: devices asking to be let in, and the QR invite.
+export const pendingRequests = () => http(ROOT + '/api/pair/pending');
+export const decideRequest = (id, allow) => http(ROOT + '/api/pair/decide', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, allow }),
+});
+export const pairInvite = () => http(ROOT + '/api/pair/invite', { method: 'POST' });
+export const removeAllDevices = () => http(ROOT + '/api/pair/reset', { method: 'POST' });

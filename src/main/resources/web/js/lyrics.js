@@ -1,6 +1,6 @@
 // Time-synced lyrics from Apple Music TTML, shown in the sidebar, as a page, or in the full-screen player.
 import { esc, icon } from './util.js';
-import { S, am, sf, positionNow, cmd, subscribe } from './store.js';
+import { S, am, sf, displayPosition, cmd, subscribe } from './store.js';
 
 const cache = new Map();
 /** A break between sung lines at least this long (seconds) shows the animated "…" dots. */
@@ -166,7 +166,7 @@ export function mountLyrics(el, { compact = false, variant = 'full' } = {}) {
     const following = Date.now() - userScrolledAt > HANDS_OFF;
     el.classList.toggle('following', following && !!data && data.synced);
     if (!data || !data.synced) return;
-    const pos = positionNow() + 0.25;
+    const pos = displayPosition() + 0.25;
     let idx = -1;
     for (let i = 0; i < data.lines.length; i++) {
       const l = data.lines[i];

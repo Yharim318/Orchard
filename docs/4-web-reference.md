@@ -11,7 +11,7 @@ first, so module code runs in this order:
 
 ```
 util.js  →  store.js  →  keys.js  →  components.js  →  artwork.js / playlists.js  →  lyrics.js  →  views.js
-        →  player.js  →  updates.js  →  settings.js  →  app.js (boot)
+        →  player.js  →  updates.js / pairing.js  →  settings.js  →  app.js (boot)
 ```
 
 ```
@@ -20,6 +20,7 @@ player.js ──► util, store, components, lyrics, views, keys
 views.js ──► util, store, components, lyrics
 settings.js ──► util, playlists (openDialog), keys, updates
 updates.js ──► util, store
+pairing.js ──► util, store, playlists (openDialog)
 keys.js ──► util
 components.js ──► util, store
 lyrics.js ──► util, store
@@ -225,6 +226,15 @@ for letters and named keys), `actionFor(combo)`, `reserved(combo)`, `label`/`key
 (Playback, Views, App; App-window-only ones are hidden elsewhere). "+" records a key: it listens on `window` in
 the capture phase so it runs before the dialog's Esc handler and the app's shortcuts, so Esc cancels and can't
 be recorded itself. Hovering a key shows its ✕. A key already used by another action moves to the new one.
+
+`pairing.js`: access (`Access.java`). `showPairing()` covers the app on a device that isn't paired ("Connect to
+<computer>": asks with `requestAccess`, polls `accessStatus` every 2 s, saves the key and reloads once allowed).
+`initPairing()` shows it whenever `store` reports `unpaired` (a 401, or `init()` finding `paired: false`), and in
+the Orchard window turns `pair-requests` events into an "Allow “<device>”?" dialog. Closing that dialog counts as
+Deny. `store.js` adds the key to every request (`authHeaders`, `orchardFetch`, the event stream's `?key=`), and
+trades a `?pair=` QR invite for a key at startup (`claimInvite`). `player.js` puts the invite into the QR code
+(`qrUrl`). `displayPosition()` (store.js) is the position for the screen: it never steps back by a fraction of a
+second while playing, so lyrics don't flick back to the previous line when a speaker report lands late.
 
 `updates.js`: automatic updates (`Updater.java`, `/api/update`), always on the Orchard that served the page, never
 a speaker it controls. `initUpdates()` adds the sidebar's "Restart to update" item (shown once an update is

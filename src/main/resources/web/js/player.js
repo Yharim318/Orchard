@@ -1,6 +1,6 @@
 // Player bar, mobile mini/full player, device picker ("Connect"), right panel and engine status overlay.
 import { $, esc, art, fmtTime, icon, EQ, throttle, toast, store as persist, BACKDROP, backdrop } from './util.js';
-import { S, cmd, post, subscribe, positionNow, patchState, selectSpeaker, isHostApp } from './store.js';
+import { S, cmd, post, subscribe, positionNow, displayPosition, patchState, selectSpeaker, isHostApp, HOST_PROXY, pairInvite } from './store.js';
 import { isLoved, toggleLoved, lovedCached, trackMenuItems, openMenu, markPlaying, artistLink, trackMenuHead } from './components.js';
 import { mountLyrics, lyricsViewButtons } from './lyrics.js';
 import { seekStep } from './keys.js';
@@ -292,7 +292,7 @@ function setRange(input, value, max) {
 function tick() {
   const s = S.state;
   const dur = s.duration || (s.item && s.item.duration) || 0;
-  const pos = positionNow();
+  const pos = displayPosition();
   if (!seeking) {
     document.querySelectorAll('.seek').forEach((r) => setRange(r, dur ? Math.round((pos / dur) * 1000) : 0, 1000));
     document.querySelectorAll('.t-cur').forEach((n) => { n.textContent = fmtTime(pos); });
@@ -722,18 +722,33 @@ function pairingHtml() {
   const cur = list[pairIdx];
   return `<h4>Use your phone as a remote</h4>
     ${list.length > 1 ? `<div class="pair-tabs">${list.map((r, i) =>
-      `<button class="chip${i === pairIdx ? ' on' : ''}" data-pair="${i}">${PAIR_LABEL[r.kind] || r.kind}</button>`).join('')}</div>` : ''}
-    <div class="pair"><div class="qr" data-url="${esc(cur.url)}"></div><div><p>Scan with your phone's camera, or open:</p>
+      `<button class="chip${i === pairIdx ? ' on' : ''}" data-pair="${i}">${PAIR_LABEL[r.kind] || esc(r.kind)}</button>`).join('')}</div>` : ''}
+    <div class="pair"><div class="qr" data-url="${esc(cur.url)}"></div><div><p>${HOST_PROXY ? 'Scan with your phone’s camera to connect it, or open this address and allow it here:' : 'Scan with your phone’s camera, or open:'}</p>
       <code>${esc(cur.url)}</code></div></div>
     <p class="pair-hint">${PAIR_HINTS[cur.kind] || ''} No app needed: it opens in your phone's browser. Use “Add to Home screen” for an app icon.</p>`;
+}
+
+/**
+ * In the Orchard window the QR code carries an invite (?pair=…), so a phone that scans it is paired at once;
+ * typing the address instead makes the phone ask, and this window shows Allow / Deny.
+ */
+async function qrUrl(url) {
+  if (!HOST_PROXY) return url;
+  try {
+    const { code } = await pairInvite();
+    return `${url}${url.includes('?') ? '&' : '?'}pair=${encodeURIComponent(code)}`;
+  } catch (e) {
+    return url; // not signed in yet: the phone will ask instead
+  }
 }
 
 function renderQr(root) {
   const box = root.querySelector('.qr');
   if (!box) return;
-  loadQr().then((qrcode) => {
+  Promise.all([loadQr(), qrUrl(box.dataset.url)]).then(([qrcode, url]) => {
+    if (!box.isConnected) return;
     const qr = qrcode(0, 'M');
-    qr.addData(box.dataset.url);
+    qr.addData(url);
     qr.make();
     box.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
   }).catch(() => box.remove());
@@ -777,7 +792,7 @@ function openDevices(anchor) {
       return;
     }
     if (e.target.closest('[data-a="signout"]')) {
-      if (!confirm('Sign out of Apple Music on this speaker?')) return;
+      if (!confirm('Sign out of Apple Music on this speaker? Every phone and computer allowed to use it will have to be allowed again.')) return;
       try { await post('/api/signout'); } catch (err) { toast(err.message); }
       closeDevices();
     }

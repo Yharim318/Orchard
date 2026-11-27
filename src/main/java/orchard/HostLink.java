@@ -26,6 +26,7 @@ final class HostLink {
 
         HostClient(String deviceId, String name, String kind) {
             super(deviceId, name, kind);
+            local = true; // the Orchard window on this computer
         }
 
         @Override
@@ -85,7 +86,7 @@ final class HostLink {
     /** Maps a speaker address the app window asked for to a known speaker, or null. */
     String peerBase(String requested) {
         if (requested == null || requested.isBlank()) return null;
-        Discovery.Peer p = app.discovery() == null ? null : app.discovery().peerByUrl(requested.replaceAll("/+$", ""));
+        Discovery.Peer p = app.linkedPeer(requested.replaceAll("/+$", "")); // only computers on this account
         return p == null ? null : p.url();
     }
 
@@ -111,7 +112,7 @@ final class HostLink {
 
     private void startRelay(String base, HostClient client) {
         String q = "deviceId=" + enc(client.deviceId) + "&name=" + enc(client.name) + "&kind=" + enc(client.kind);
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/api/events?" + q)).GET().build();
+        HttpRequest req = app.authorize(HttpRequest.newBuilder(URI.create(base + "/api/events?" + q))).GET().build();
         Thread.startVirtualThread(() -> {
             Stream<String> lines = null;
             try {
@@ -128,7 +129,7 @@ final class HostLink {
                     if (line.startsWith("event:")) event = line.substring(6).trim();
                     else if (line.startsWith("data:")) data.append(line.substring(5).trim());
                     else if (line.isEmpty()) {
-                        if (event != null && !data.isEmpty()) client.send(event, data.toString());
+                        if (event != null && !data.isEmpty()) relayEvent(client, event, data.toString());
                         event = null;
                         data.setLength(0);
                     }
@@ -144,6 +145,23 @@ final class HostLink {
                 }
             }
         });
+    }
+
+    /**
+     * Passes one event from the other speaker on to the app window. Its data ends up inside JavaScript evaluated in
+     * the app window (which runs as music.apple.com), so it is never passed on as raw text: it must parse as JSON
+     * and is written out again by our own JSON writer. Anything else on that network could pose as a speaker.
+     */
+    private static void relayEvent(HostClient client, String event, String data) {
+        if (!event.matches("[a-z][a-z-]{0,31}") || data.length() > 4_000_000) return;
+        Object parsed;
+        try {
+            parsed = Json.parse(data);
+        } catch (RuntimeException e) {
+            Log.debug("Ignoring a malformed '" + event + "' event from the other speaker");
+            return;
+        }
+        client.send(event, Json.write(parsed));
     }
 
     private void stopRelay() {
@@ -164,12 +182,17 @@ final class HostLink {
 
     /** Performs an app-window request against this computer's server (or a known speaker, for peer commands). */
     Response forward(String method, String pathAndQuery, String contentType, String body, String peer) throws Exception {
+        // Must be a path: "/orchard@evil.com/x" would otherwise become http://127.0.0.1:8787@evil.com/x (host evil.com).
+        if (!pathAndQuery.startsWith("/") || pathAndQuery.startsWith("//") || pathAndQuery.contains("\\")) {
+            return new Response(400, "application/json", "{\"error\":\"Bad path\"}".getBytes(StandardCharsets.UTF_8));
+        }
         String base = "http://127.0.0.1:" + app.port();
         if (peer != null && !peer.isBlank()) {
             base = peerBase(peer);
             if (base == null) return new Response(400, "application/json", "{\"error\":\"Unknown speaker\"}".getBytes(StandardCharsets.UTF_8));
         }
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(base + pathAndQuery)).timeout(Duration.ofSeconds(60));
+        if (peer != null && !peer.isBlank()) app.authorize(b); // the other computer wants our key
         if (contentType != null) b.header("Content-Type", contentType);
         b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         HttpResponse<InputStream> r = http.send(b.build(), HttpResponse.BodyHandlers.ofInputStream());

@@ -182,7 +182,10 @@ final class Discovery {
                 if (port <= 0 || port > 65535) continue;
                 InetAddress from = packet.getAddress();
                 String url = "http://" + from.getHostAddress() + ":" + port;
+                // Anything on the network can send these packets: keep the name short and printable.
                 String rawName = Json.str(msg, "name");
+                rawName = rawName == null ? null : rawName.replaceAll("\\p{Cntrl}", "").strip();
+                if (rawName != null && rawName.length() > 60) rawName = rawName.substring(0, 60);
                 String name = rawName == null || rawName.isBlank() ? from.getHostAddress() : rawName;
                 long now = System.currentTimeMillis();
                 Peer prev = peers.get(id);

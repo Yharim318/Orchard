@@ -26,11 +26,17 @@ final class Hub {
         final String name;
         final String kind;
         final long since = System.currentTimeMillis();
+        /** On this computer (the Orchard window, a local browser): keeps its connection when keys are reset. */
+        volatile boolean local;
 
         Client(String deviceId, String name, String kind) {
             this.deviceId = deviceId;
             this.name = name;
             this.kind = kind;
+        }
+
+        /** Ends the connection (only streams can be ended from here). */
+        void close() {
         }
 
         /** Delivers one event; false if the client is gone. */
@@ -71,6 +77,11 @@ final class Hub {
         @Override
         void ping() {
             write(": ping\n\n");
+        }
+
+        @Override
+        void close() {
+            done.countDown();
         }
     }
 
@@ -121,6 +132,17 @@ final class Hub {
         for (Client c : clients) {
             if (!c.send(event, json) && !(c instanceof SseClient)) unregister(c);
         }
+    }
+
+    /** Sends an event only to the Orchard window(s) on this computer (e.g. "Allow this device?"). */
+    void broadcastLocal(String event, Object data) {
+        String json = Json.write(data);
+        for (Client c : clients) if (c.local && "app".equals(c.kind)) c.send(event, json);
+    }
+
+    /** Disconnects every device that isn't on this computer (after its access was taken away). */
+    void dropRemote() {
+        for (Client c : clients) if (!c.local) c.close();
     }
 
     List<Map<String, Object>> devices() {

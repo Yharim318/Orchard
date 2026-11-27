@@ -49,6 +49,15 @@ public final class Main {
                 app::speakers);
         Discovery discovery = new Discovery(id, name, o.port, o.peers, () -> hub.broadcast("speakers", app.speakers()));
         app.init(hub, discovery);
+        // Who may use this Orchard: devices paired by the signed-in account, and computers proving the same account.
+        Access access = new Access(dataDir);
+        AccountLink link = new AccountLink(id, name, access, AccountLink.appleLibrary(app::engine), app::signedIn,
+                AccountLink.httpTransport());
+        app.setAccess(access, link);
+        access.onChange(() -> {
+            hub.broadcast("speakers", app.speakers());
+            hub.broadcastLocal("pair-requests", access.pending());
+        });
         Updater updater = new Updater(dataDir, List.of(args), o.noUpdate,
                 () -> Boolean.TRUE.equals(app.state().get("isPlaying")));
         app.setUpdater(updater);
@@ -67,7 +76,11 @@ public final class Main {
         if (o.console) ConsoleWindow.show();
         notes.forEach(Log::info);
         server.start();
-        if (!o.localOnly) discovery.start();
+        if (!o.localOnly) {
+            discovery.start();
+            link.start(() -> discovery.peers().stream()
+                    .map(p -> new AccountLink.Peer(p.id(), p.name(), p.url())).toList(), p -> stillLinked(app, p));
+        }
         updater.start();
 
         String localUrl = "http://localhost:" + o.port + "/";
@@ -121,7 +134,10 @@ public final class Main {
             HostLink hostLink = new HostLink(app);
             Engine engine = new Engine(cdp, java.util.List.of(Engine.ORCHARD_PREFIX, localUrl),
                     resource("/engine/engine.js"), o.engineWindow, hostLink,
-                    state -> hub.broadcast("state", state), ui -> hub.broadcast("engine-ui", ui));
+                    state -> {
+                        hub.broadcast("state", state);
+                        app.observeSignIn(state);
+                    }, ui -> hub.broadcast("engine-ui", ui));
             app.setEngine(engine);
             engine.onAppClosed(() -> System.exit(0));
             cdp.closedFuture().thenAccept(reason -> {
@@ -145,6 +161,20 @@ public final class Main {
             Log.warn("Could not start the browser: " + e.getMessage());
             app.setEngineProblem("Could not start the browser: " + e.getMessage());
             ConsoleWindow.show();
+        }
+    }
+
+    /** Whether a linked computer still accepts our key (false once it signed out, which resets its keys). */
+    private static boolean stillLinked(Orchard app, AccountLink.Peer p) {
+        try {
+            java.net.http.HttpRequest req = app.authorize(java.net.http.HttpRequest.newBuilder(
+                    java.net.URI.create(p.url() + "/api/access"))).timeout(java.time.Duration.ofSeconds(10)).GET().build();
+            java.net.http.HttpResponse<String> r = java.net.http.HttpClient.newHttpClient()
+                    .send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (r.statusCode() != 200) return true; // can't tell (old version, busy): keep the link
+            return Json.bool(Json.parseObject(r.body()), "paired");
+        } catch (Exception e) {
+            return true; // unreachable right now; discovery drops it if it's gone
         }
     }
 

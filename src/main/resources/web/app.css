@@ -977,6 +977,21 @@ body.q-drag-cursor, body.q-drag-cursor * { cursor: grabbing !important; user-sel
 .set-actions { display: flex; gap: 8px; }
 .set-actions .btn.small.primary { background: var(--accent); color: var(--accent-ink); }
 #nav .update-ready { color: var(--accent); }
+
+/* Not paired yet (pairing.js): covers the app until the Orchard computer allows this device. */
+.pairing { position: fixed; inset: 0; z-index: 95; display: grid; place-items: center; padding: 24px 16px; background: var(--bg, #121214); overflow-y: auto; }
+.pairing-card { width: min(420px, 100%); text-align: center; }
+.pairing-logo { display: block; width: 64px; height: 64px; margin: 0 auto 18px; }
+.pairing h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 12px; overflow-wrap: anywhere; }
+.pairing-text { color: var(--text); font-size: 16px; line-height: 1.5; min-height: 48px; }
+.pairing-actions { margin: 18px 0 26px; min-height: 48px; display: grid; place-items: center; }
+.pairing-hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.pairing-hint .ic { width: 16px; height: 16px; vertical-align: -3px; }
+.pairing-wait { display: inline-flex; gap: 6px; }
+.pairing-wait i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pair-dot 1.2s ease-in-out infinite; }
+.pairing-wait i:nth-child(2) { animation-delay: .15s; }
+.pairing-wait i:nth-child(3) { animation-delay: .3s; }
+@keyframes pair-dot { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: none; } }
 #nav .update-ready:hover { color: var(--accent-2); }
 .dlg-head { display: flex; align-items: center; justify-content: space-between; margin: -6px -8px 14px 0; }
 .dlg-title { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
